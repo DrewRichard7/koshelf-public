@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>KoShelf</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body class="waiting"><section id="waiting" class="waiting-screen" aria-label="Library connection"><a class="waiting-brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt="">KoShelf</a><div class="cloud-scene" aria-hidden="true"><div class="cloud cloud-back"></div><div class="cloud cloud-front"></div><img class="floating-book" src="/koshelf-icon.png" alt=""><span class="spark spark-one">✧</span><span class="spark spark-two">·</span><span class="spark spark-three">✧</span></div><div class="waiting-copy"><div class="eyebrow">A LITTLE ROOM FOR YOUR BOOKS</div><h1 id="waiting-title">Waiting for your library</h1><p id="waiting-message">Plug in your Kindle. We’ll take it from here.</p><div class="connection-pulse"><i></i><span id="waiting-status">Looking for your Kindle</span></div><button id="waiting-choose" class="quiet">Or choose a folder on this computer ↗</button></div><div class="waiting-bottom">Your next chapter is just a connection away.</div></section><aside class="sidebar"><a class="brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt=""><span>KoShelf<small>A little room for your books.</small></span></a><div class="section-label">YOUR LIBRARY</div><button id="all" class="nav active"><i class="shelf-icon" aria-hidden="true"></i> All books <span id="count">0</span></button><div class="folder-header"><div class="section-label folder-label">FOLDERS</div><button id="new-folder" class="folder-add" title="Create a folder" aria-label="New folder" disabled>＋</button></div><nav id="folders" aria-label="Library folders"></nav><div class="sidebar-bottom"><div id="status"><i></i> No library connected</div><div id="library-switcher" role="group" aria-label="Library view" hidden><button id="switch-mac" class="button">Mac library</button><button id="switch-kindle" class="button">Kindle library</button></div><p id="kindle-status" role="status" hidden></p><button id="eject" class="button eject" hidden>⏏ &nbsp; Eject Kindle</button><button id="change" class="quiet">Choose library folder</button><p>Drag a book onto a folder to move it.<br>KOReader companion folders move too.</p></div></aside>
+<main><header><div class="eyebrow" id="library-label">YOUR LIBRARY</div><div class="title-row"><h1 id="heading">Your bookshelf</h1><div class="header-actions">
+  <button id="backup" class="button" title="Copy the library to ~/KoShelf Library">Back up library</button>
+  <details id="shelf-actions">
+    <summary class="button" aria-label="Shelf actions" title="Shelf actions"><span class="shelf-menu-icon" aria-hidden="true"></span></summary>
+    <div class="shelf-action-list">
+      <button id="import-books" type="button">Import EPUBs</button>
+      <button id="find-duplicates" type="button">Find duplicates</button>
+      <button id="open-duplicate-archive" type="button">Duplicate archive</button>
+      <button id="open-sync-history" type="button">Sync history</button>
+      <button id="open-icloud-sync" type="button">iCloud Drive sync…</button>
+      <button id="open-font-manager" type="button">Manage fonts…</button>
+      <button id="open-library-health" type="button">Library health check</button>
+      <button id="open-genre-cleanup" type="button">Clean up metadata…</button>
+      <button id="remove-folder" type="button" hidden>Remove folder…</button>
+    </div>
+  </details>
+  <input id="import-files" type="file" accept=".epub" multiple hidden>
+</div></div><p id="subtitle">Connect your Kindle, or choose a folder to begin.</p></header><div id="sync-feedback" class="sync-feedback" hidden>
+  <span id="sync-icon" class="sync-icon" aria-hidden="true"></span>
+  <div role="status" aria-atomic="true"><strong id="sync-title"></strong><div id="sync-detail"></div></div>
+  <button id="dismiss-sync" class="button" type="button" aria-label="Dismiss sync status" hidden>×</button>
+</div><div id="shelf-overview"><div id="overview-strip" class="overview-strip" tabindex="0" aria-label="Shelf overview"><section id="storage" class="storage-panel" aria-label="Storage overview" hidden><div class="storage-main"><div class="storage-top"><div class="eyebrow">SPACE ON YOUR SHELF</div></div><button id="storage-toggle" class="storage-toggle" aria-expanded="true" aria-controls="storage-details" aria-label="Collapse storage overview" title="Collapse storage overview">⌃</button><div class="storage-head"><div><div id="storage-size" class="storage-size">0 B</div><p id="storage-caption"></p></div><div class="storage-drive"><div class="drive-label">VOLUME STORAGE</div><div id="drive-summary"></div><div class="drive-track"><div id="drive-fill"></div></div><small id="drive-free"></small></div></div><div id="directory-bar" class="directory-bar" aria-label="Directory size breakdown"></div><div id="storage-details"><div id="directory-breakdown" class="directory-breakdown"></div><p id="storage-note" class="storage-note"></p></div></div></section><section id="genre-overview" class="storage-panel genre-overview" aria-labelledby="genre-heading" hidden>
+  <h2 id="genre-heading" class="eyebrow">Genre breakdown</h2>
+  <button id="genre-toggle" class="storage-toggle" type="button" aria-controls="genre-details">⌃</button>
+  <div id="genre-details">
+  <p class="genre-note">Books with multiple genres split their share between slices.</p>
+  <div class="genre-layout">
+    <div id="genre-pie" class="genre-pie" role="group" aria-label="Genre shares by book count"></div>
+    <div id="genre-breakdown" aria-label="Genre legend"></div>
+  </div>
+  </div>
+  <div id="genre-bar" class="directory-bar" role="group" aria-label="Genre shares by book count"></div>
+</section></div><div id="overview-nav" class="overview-nav" hidden>
+  <button id="show-storage" class="button" type="button" aria-controls="overview-strip">← Storage</button>
+  <button id="show-genres" class="button" type="button" aria-controls="overview-strip">Genres →</button>
+</div></div><section class="toolbar"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Search your shelf…" aria-label="Search books"></label><select id="genre-filter" aria-label="Filter by genre"><option value="">All genres</option></select><select id="series-filter" aria-label="Filter by series"><option value="">All series</option></select><select id="reading-filter" aria-label="Filter by reading status">
+  <option value="">Any reading status</option>
+  <option value="reading">Reading</option>
+  <option value="complete">Finished</option>
+  <option value="abandoned">On hold</option>
+  <option value="unknown">No saved status</option>
+</select><select id="sort" aria-label="Sort books"><option value="title">Title · A–Z</option><option value="author">Author · A–Z</option><option value="genre">Genre · A–Z</option><option value="series">Series order</option><option value="modified">Recently modified</option></select><span id="results"></span><button id="select-books" class="button" aria-pressed="false">Select books</button></section><section id="selection-bar" class="selection-bar" aria-label="Book selection" hidden><span id="selection-count" role="status"></span><button id="select-visible" class="button">Select visible</button><button id="clear-selection" class="button">Clear</button><button id="move-selected" class="button">Move to folder…</button><button id="send-selected" class="button" type="button" hidden>Send to Kindle…</button><button id="edit-selected" class="button primary">Edit metadata…</button></section><div class="feedback"><div id="notice" role="status" aria-live="polite"></div><button id="undo" class="quiet" hidden>Undo move</button></div><section id="grid" class="grid" aria-label="Books"></section><section id="empty" class="empty" hidden><img class="empty-icon" src="/koshelf-icon.png" alt=""><h2>A home for your next read.</h2><p>Connect your Kindle and choose its books folder.<br>You can also explore a local EPUB folder.</p><button id="connect" class="button primary">Choose a library</button></section><footer>EPUBs, simply organized.<span id="root"></span></footer></main>
+<dialog id="chooser"><form id="choose-form"><div class="eyebrow">CONNECT YOUR LIBRARY</div><h2>Where do your books live?</h2><p>Paste a folder path. On your Kindle, this is usually<br><code>/Volumes/Kindle/books</code>.</p><div id="candidates"></div><label for="path">Library folder</label><input id="path" required placeholder="/Volumes/Kindle/books" autocomplete="off"><p class="hint">In Finder, select your books folder and press ⌥⌘C to copy its path.</p><p id="choose-error" role="alert"></p><div class="actions"><button id="cancel" type="button" class="button">Cancel</button><button class="button primary" type="submit">Open library</button></div></form></dialog>
+<dialog id="folder-dialog"><form id="folder-form"><div class="eyebrow">MAKE A LITTLE ROOM</div><h2>New folder</h2><label for="folder-parent">Create inside</label><select id="folder-parent" class="field"></select><label for="folder-name">Folder name</label><input id="folder-name" class="field" required maxlength="120" placeholder="e.g. Next to read" autocomplete="off"><p id="folder-error" role="alert"></p><div class="actions"><button id="cancel-folder" type="button" class="button">Cancel</button><button type="submit" class="button primary">Create folder</button></div></form></dialog>
+<dialog id="move-dialog"><form id="move-form"><div class="eyebrow">FIND A NEW HOME</div><h2>Move book</h2><p id="move-title"></p><label for="move-target">Destination folder</label><select id="move-target" class="field"></select><p>Its KOReader companion folder moves with it, when present.</p><p id="move-error" role="alert"></p><div class="actions"><button id="cancel-move" type="button" class="button">Cancel</button><button type="submit" class="button primary">Move book</button></div></form></dialog>
+<dialog id="remove-dialog"><form id="remove-form"><div class="eyebrow">KEEP THE BOOKS. LOSE THE FOLDER.</div><h2>Remove this folder?</h2><p id="remove-description"></p><p>Everything inside—including subfolders and KOReader companion folders—will move up one level. No contents will be deleted. If a name already exists there, nothing will change.</p><p id="remove-error" role="alert"></p><div class="actions"><button id="cancel-remove" type="button" class="button">Cancel</button><button class="button primary" type="submit">Move contents &amp; remove folder</button></div></form></dialog>
+<dialog id="metadata-dialog"><form id="metadata-form"><div class="eyebrow">A BOOK, PROPERLY NAMED</div><h2>Edit metadata</h2><div id="cover-drop" class="cover-drop"><div id="cover-preview"></div><div><strong>Cover art</strong><p>Drop a JPEG or PNG here.</p><input id="cover-file" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden><button id="choose-cover" class="button" type="button">Choose image…</button><button id="discard-cover" class="quiet" type="button" hidden>Undo selection</button><p id="cover-status" role="status" hidden></p></div></div><label for="metadata-title">Title</label><input id="metadata-title" class="field" required maxlength="1000"><label for="metadata-authors">Authors · one per line</label><textarea id="metadata-authors" class="field" rows="3" required></textarea><label for="metadata-genres">Genres · one per line</label><textarea id="metadata-genres" class="field" rows="3"></textarea><div class="series-fields"><div><label for="metadata-series">Series</label><input id="metadata-series" class="field" maxlength="500"></div><div><label for="metadata-position">Position</label><input id="metadata-position" class="field" maxlength="32" placeholder="e.g. 2.5"></div></div><p>Changes are saved inside the EPUB. The filename stays the same. An original copy is backed up on your Mac.</p><p class="hint">KOReader may need “Refresh cached book information” to show the changes.</p><p id="metadata-error" role="alert"></p><div class="actions"><button id="cancel-metadata" class="button" type="button">Cancel</button><button class="button primary" type="submit">Save metadata</button></div></form></dialog>
+<dialog id="bulk-move-dialog" aria-labelledby="bulk-move-heading">
+  <form id="bulk-move-form">
+    <h2 id="bulk-move-heading">Move selected books</h2>
+    <p id="bulk-move-count"></p>
+    <label for="bulk-move-target" id="bulk-move-target-label">Destination folder</label>
+    <select id="bulk-move-target" class="field"></select>
+    <label><input type="checkbox" id="bulk-move-create"> Create a new folder</label>
+    <div id="bulk-move-new" hidden>
+      <label for="bulk-move-name">New folder name</label>
+      <input id="bulk-move-name" class="field" maxlength="120" autocomplete="off">
+    </div>
+    <p>KOReader companion folders move with their books. Existing files are kept if a name conflicts.</p>
+    <progress id="bulk-move-progress" aria-label="Books processed" hidden></progress>
+    <p id="bulk-move-status" role="status"></p>
+    <ul id="bulk-move-errors" class="transfer-paths" hidden></ul>
+    <div class="actions">
+      <button id="close-bulk-move" class="button" type="button">Cancel</button>
+      <button id="save-bulk-move" class="button primary" type="submit">Move books</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="bulk-dialog" aria-labelledby="bulk-heading">
+  <form id="bulk-form">
+    <h2 id="bulk-heading">Edit selected books</h2>
+    <details class="backup-paths"><summary id="bulk-count"></summary><ul id="bulk-books" class="transfer-paths"></ul></details>
+    <label><input id="bulk-change-authors" type="checkbox"> Replace authors</label>
+    <textarea id="bulk-authors" class="field" rows="2" aria-label="New authors, one per line" placeholder="One author per line" disabled></textarea>
+    <label for="bulk-genre-action">Genres</label>
+    <select id="bulk-genre-action" class="field">
+      <option value="">Keep existing genres</option>
+      <option value="add">Add genres</option>
+      <option value="remove">Remove genres</option>
+      <option value="replace">Replace all genres</option>
+    </select>
+    <textarea id="bulk-genres" class="field" rows="2" aria-label="Genres, one per line" placeholder="One genre per line" disabled></textarea>
+    <label><input id="bulk-change-series" type="checkbox"> Assign a series</label>
+    <input id="bulk-series" class="field" aria-label="Series name" placeholder="Series name" maxlength="500" disabled>
+    <p>Each edited EPUB is backed up on your Mac first. Leave the genre box empty with “Replace all genres” to clear them.</p>
+    <progress id="bulk-progress" aria-label="Books processed" hidden></progress>
+    <p id="bulk-status" role="status" aria-live="polite"></p>
+    <ul id="bulk-errors" class="transfer-paths" hidden></ul>
+    <div class="actions"><button id="close-bulk" class="button" type="button">Cancel</button><button id="save-bulk" class="button primary" type="submit" disabled>Apply changes</button></div>
+  </form>
+</dialog>
+<dialog id="icloud-dialog" aria-labelledby="icloud-heading">
+  <h2 id="icloud-heading">iCloud Drive sync</h2>
+  <p>Review EPUB changes between your Mac library and a folder in iCloud Drive. macOS handles uploads and downloads for that folder.</p>
+  <section id="icloud-config" hidden>
+    <form id="icloud-setup">
+      <label for="icloud-path">iCloud Drive folder</label>
+      <input id="icloud-path" class="field" required autocomplete="off" spellcheck="false">
+      <p class="hint">Use a dedicated folder for KoShelf. In Finder, select the folder and press ⌥⌘C to copy its path.</p>
+      <div class="icloud-tools">
+        <button id="icloud-pick" class="button" type="button" hidden>Choose folder…</button>
+        <button id="icloud-keep-folder" class="button" type="button" hidden>Keep current folder</button>
+        <button class="button primary" type="submit">Connect folder</button>
+      </div>
+    </form>
+  </section>
+  <section id="icloud-connected" hidden>
+    <div class="icloud-folder">
+      <div><strong id="icloud-folder-state"></strong><small id="icloud-folder-path"></small></div>
+      <button id="icloud-change" class="button" type="button">Change folder…</button>
+      <button id="icloud-disconnect" class="button" type="button">Disconnect</button>
+    </div>
+    <div id="icloud-disconnect-confirm" hidden>
+      <p>Disconnect iCloud sync? EPUBs stay in both folders.</p>
+      <div class="icloud-tools">
+        <button id="icloud-disconnect-cancel" class="button" type="button">Cancel</button>
+        <button id="icloud-disconnect-confirmed" class="button primary" type="button">Disconnect folder</button>
+      </div>
+    </div>
+    <details id="icloud-upload-help">
+      <summary>Check upload status in Finder</summary>
+      <p>KoShelf can confirm file changes in your iCloud Drive folder on this Mac. Finder shows whether macOS has finished uploading them.</p>
+    </details>
+    <details id="icloud-history">
+      <summary>Recent iCloud syncs</summary>
+      <div id="icloud-history-runs"></div>
+    </details>
+  </section>
+  <progress id="icloud-progress" aria-label="iCloud sync progress" hidden></progress>
+  <p id="icloud-status" role="status"></p>
+  <div id="icloud-review"></div>
+  <p id="icloud-delete-help" class="hint" hidden>Review each removal before syncing. KoShelf keeps a recovery copy on this Mac.</p>
+  <div class="actions">
+    <form method="dialog"><button id="icloud-close" class="button">Close</button></form>
+    <button id="icloud-preview" class="button" type="button" hidden>Review changes</button>
+    <button id="icloud-apply" class="button primary" type="button" hidden>Sync changes</button>
+  </div>
+</dialog>
+<dialog id="sync-dialog" aria-labelledby="sync-heading">
+  <form method="dialog">
+    <h2 id="sync-heading">Review library sync</h2>
+    <details class="backup-paths"><summary id="sync-to-mac"></summary><ul id="sync-to-mac-paths" class="transfer-paths"></ul></details>
+    <details class="backup-paths"><summary id="sync-to-kindle"></summary><ul id="sync-to-kindle-paths" class="transfer-paths"></ul></details>
+    <section id="sync-folders" hidden>
+      <details class="backup-paths"><summary id="sync-folder-count"></summary><ul id="sync-folder-paths" class="transfer-paths"></ul></details>
+      <label for="sync-folder-choice">How should matching books be organized?</label>
+      <select id="sync-folder-choice" class="field">
+        <option value="kindle">Match Kindle folders</option>
+        <option value="backup">Match Mac folders</option>
+        <option value="merge">Keep both locations</option>
+      </select>
+      <p class="hint">Folder choices can change the transfer counts above. KOReader companion folders move with their books. Ambiguous moves are left in place and reported.</p>
+    </section>
+    <details id="sync-empty-folders" class="backup-paths" hidden><summary id="sync-empty-folder-count"></summary><ul id="sync-empty-folder-paths" class="transfer-paths"></ul></details>
+    <details id="sync-reading-status" class="backup-paths" hidden><summary id="sync-reading-count"></summary><ul id="sync-reading-paths" class="transfer-paths"></ul></details>
+    <section id="sync-duplicate-archive" hidden>
+      <details class="backup-paths" open><summary id="sync-archive-count"></summary><ul id="sync-archive-paths" class="transfer-paths"></ul></details>
+      <p class="hint">KoShelf checks that the copy you chose to keep is on the Kindle before archiving the extra EPUB.</p>
+    </section>
+    <section id="sync-conflicts" hidden>
+      <details class="backup-paths"><summary id="sync-conflict-count"></summary><ul id="sync-conflict-paths" class="transfer-paths"></ul></details>
+      <p id="sync-replacement-hint" class="hint">Choose which EPUBs should match your Mac. KoShelf backs up the previous Kindle version on your Mac before replacing it.</p>
+      <div id="sync-use-mac"></div>
+    </section>
+    <div class="actions"><button class="button" value="cancel" autofocus>Close</button>
+      <button id="apply-sync" class="button primary" value="apply">Sync libraries</button></div>
+  </form>
+</dialog>
+<dialog id="backup-dialog" aria-labelledby="backup-heading">
+  <form method="dialog">
+    <h2 id="backup-heading">Same books, different folders</h2>
+    <p id="backup-matches"></p>
+    <details class="backup-paths"><summary>Review matching paths</summary><ul id="backup-examples"></ul></details>
+    <div class="backup-options" id="backup-options">
+      <button class="button" value="kindle"><strong>Match Kindle</strong><span>Move backup copies to the Kindle’s folders.</span></button>
+      <button class="button" value="backup"><strong>Match backup</strong><span>Move books on your Kindle to the backup’s folders.</span></button>
+      <button class="button" value="merge"><strong>Keep both locations</strong><span>Copy books to the new backup paths and keep the old copies.</span></button>
+    </div>
+    <p class="hint" id="backup-move-hint">Moves keep adjacent KOReader folders with their books. If a move is ambiguous or blocked, those copies stay in place.</p>
+    <div class="actions"><button class="button" value="cancel" autofocus>Cancel</button><button id="confirm-sync" class="button primary" value="copy" hidden>Sync from Kindle</button></div>
+  </form>
+</dialog>
+<dialog id="kindle-delivery-dialog" aria-labelledby="kindle-delivery-heading">
+  <h2 id="kindle-delivery-heading">Send to Kindle over USB</h2>
+  <p>KoShelf converts your EPUBs on this Mac into AZW3 copies for the Kindle reader. Your original EPUBs stay in your library.</p>
+  <ul id="kindle-delivery-books" class="transfer-paths"></ul>
+  <p id="kindle-delivery-status" role="status"></p>
+  <progress id="kindle-delivery-progress" aria-label="Books processed" hidden></progress>
+  <ul id="kindle-delivery-results" class="transfer-paths"></ul>
+  <form method="dialog" class="actions">
+    <button id="close-kindle-delivery" class="button" autofocus>Close</button>
+    <button id="refresh-kindle-delivery" class="button" type="button">Check connection</button>
+    <button id="confirm-kindle-delivery" class="button primary" type="button" disabled>Convert and send</button>
+  </form>
+</dialog>
+<dialog id="font-dialog" aria-labelledby="font-heading">
+  <form method="dialog"><button class="close" id="close-font-manager" aria-label="Close font manager" autofocus>×</button></form>
+  <h2 id="font-heading">Reader fonts</h2>
+  <details class="font-guide">
+    <summary>How to install and use fonts</summary>
+    <ol>
+      <li>Connect your Kindle by USB. If you downloaded a ZIP, unzip it first.</li>
+      <li>Choose a destination and add the <strong>TTF, OTF, or TTC</strong> files. Install regular, italic, bold, and bold italic together when available. Static styles are a good starting point.</li>
+      <li>Eject the Kindle and open a book. Choose <strong>Aa → Font</strong> in the Kindle reader or <strong>Font</strong> in KOReader’s top menu. Restart KOReader if it was already open.</li>
+    </ol>
+    <p>Removing a font saves a copy on this Mac in KoShelf’s <strong>removed-fonts</strong> state folder. You can import that copy again. Bundled KOReader fonts are marked in the list.</p>
+  </details>
+  <div class="font-toolbar">
+    <p id="font-status" role="status"></p>
+    <button id="refresh-fonts" class="button" type="button">Refresh</button>
+  </div>
+  <div id="font-controls" hidden>
+    <div class="font-import" id="font-drop">
+      <div>
+        <label for="font-target">Install to</label>
+        <select class="field" id="font-target">
+          <option value="both">Both readers</option>
+          <option value="kindle">Kindle reader</option>
+          <option value="koreader">KOReader</option>
+        </select>
+      </div>
+      <div>
+        <button id="choose-font-files" class="button primary" type="button">Choose fonts…</button>
+        <input type="file" id="font-files" accept=".ttf,.otf,.ttc" multiple hidden>
+        <p class="hint">Or drop font files here</p>
+      </div>
+    </div>
+    <div class="font-toolbar">
+      <label for="font-reader">Show installed fonts in</label>
+      <select id="font-reader" class="field">
+        <option value="kindle">Kindle reader</option>
+        <option value="koreader">KOReader</option>
+      </select>
+    </div>
+    <label for="font-search" class="font-search-label">Find a family</label>
+    <input id="font-search" type="search" class="field" placeholder="Search installed fonts">
+    <p id="font-sample" class="font-sample" hidden></p>
+    <div id="font-list"></div>
+  </div>
+</dialog>
+<dialog id="font-remove-dialog" aria-labelledby="font-remove-heading">
+  <h2 id="font-remove-heading">Remove this font?</h2>
+  <p id="font-remove-message"></p>
+  <form method="dialog" class="actions">
+    <button class="button" autofocus>Cancel</button>
+    <button class="button primary" type="button" id="confirm-font-removal">Remove font</button>
+  </form>
+</dialog>
+<dialog id="import-dialog" aria-labelledby="import-heading">
+  <h2 id="import-heading">Import EPUBs</h2>
+  <label for="import-folder">Destination folder</label>
+  <select id="import-folder" class="field"></select>
+  <p id="import-status" role="status"></p>
+  <ul id="import-preview" class="transfer-paths"></ul>
+  <form method="dialog" class="actions">
+    <button id="close-import" class="button" autofocus>Close</button>
+    <button id="confirm-import" class="button primary" type="button">Copy EPUBs</button>
+  </form>
+</dialog>
+<dialog id="duplicates-dialog" aria-labelledby="duplicates-heading">
+  <h2 id="duplicates-heading">Duplicate finder</h2>
+  <p id="duplicates-status" role="status"></p>
+  <div id="duplicates-results"></div>
+  <form method="dialog" class="actions"><button class="button" autofocus>Close</button></form>
+</dialog>
+<dialog id="archive-confirm" aria-labelledby="archive-confirm-heading">
+  <h2 id="archive-confirm-heading">Keep this copy?</h2>
+  <p id="archive-keeper"></p>
+  <p>The other EPUBs will be saved in your Mac’s Duplicate archive and removed from this shelf.</p>
+  <ul id="archive-candidates" class="transfer-paths"></ul>
+  <form method="dialog" class="actions">
+    <button class="button" value="cancel" autofocus>Cancel</button>
+    <button class="button primary" value="archive">Archive other copies</button>
+  </form>
+</dialog>
+<dialog id="sync-history-dialog" aria-labelledby="sync-history-heading">
+  <h2 id="sync-history-heading">Sync history</h2>
+  <p id="sync-history-status" role="status"></p>
+  <div id="sync-history-runs"></div>
+  <form method="dialog" class="actions"><button id="close-sync-history" class="button" autofocus>Close</button></form>
+</dialog>
+<dialog id="library-health-dialog" aria-labelledby="library-health-heading">
+  <h2 id="library-health-heading">Library health check</h2>
+  <p id="library-health-status" role="status"></p>
+  <div id="library-health-results"></div>
+  <form method="dialog" class="actions"><button class="button" autofocus>Close</button></form>
+</dialog>
+<dialog id="duplicate-archive-dialog" aria-labelledby="duplicate-archive-heading">
+  <h2 id="duplicate-archive-heading">Duplicate archive</h2>
+  <p id="duplicate-archive-status" role="status"></p>
+  <div id="duplicate-archive-entries"></div>
+  <form method="dialog" class="actions"><button class="button" autofocus>Close</button></form>
+</dialog>
+<dialog id="genre-cleanup-dialog" aria-labelledby="genre-cleanup-heading">
+  <h2 id="genre-cleanup-heading">Clean up metadata</h2>
+  <p>Review suggested genre and title changes for your Mac library. KoShelf backs up each EPUB before applying your choices.</p>
+  <div class="cleanup-toolbar">
+    <label for="cleanup-scope">Scan</label>
+    <select id="cleanup-scope" class="field"></select>
+  </div>
+  <p id="cleanup-status" role="status"></p>
+  <details id="cleanup-rules" class="duplicate-card" hidden>
+    <summary id="cleanup-rules-heading">Tag mappings</summary>
+    <label for="cleanup-search">Filter tags</label>
+    <input id="cleanup-search" class="field" type="search" autocomplete="off">
+    <div id="cleanup-tags" class="cleanup-list"></div>
+    <datalist id="cleanup-genres"></datalist>
+    <p id="cleanup-rules-status" role="status"></p>
+    <div class="cleanup-rule-actions">
+      <button id="cleanup-preview" type="button" class="button">Update preview</button>
+      <button id="cleanup-save" type="button" class="button primary">Save mappings</button>
+    </div>
+  </details>
+  <p id="cleanup-apply-status" role="status"></p>
+  <ul id="cleanup-errors" hidden></ul>
+  <div id="cleanup-books" class="cleanup-list"></div>
+  <form method="dialog" class="actions"><button id="cleanup-close" class="button">Close</button><button id="cleanup-apply" type="button" class="button primary" disabled>Apply selected</button></form>
+</dialog>
+<dialog id="split-dialog" aria-labelledby="split-heading">
+  <h2 id="split-heading">Split omnibus</h2>
+  <p>Choose where each volume starts. Exports go into a new folder beside the original.</p>
+  <label for="split-series">Series name (optional)</label>
+  <input id="split-series" class="field" maxlength="500">
+  <p id="split-status" role="status"></p>
+  <div id="split-parts"></div>
+  <div class="actions">
+    <form method="dialog"><button id="split-close" class="button">Close</button></form>
+    <button id="split-add" type="button" class="button" disabled>Add volume</button>
+    <button id="split-export" type="button" class="button primary" disabled>Export EPUBs</button>
+  </div>
+</dialog>
+<dialog id="detail"><button id="close-detail" class="close" aria-label="Close book details">×</button><div id="detail-content"></div></dialog></body></html>

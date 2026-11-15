@@ -1,0 +1,12 @@
+KoShelf
+
+KoShelf has not been notarized by Apple.
+Download and use it at your own risk.
+
+I built KoShelf for fun with AI coding tools and guided the work myself.
+It's a personal project I'm sharing with friends. Testing and review have
+been limited. KoShelf can move and modify files on your Mac and Kindle,
+so keep a separate backup of your library before using it.
+
+The app uses an ad hoc signature. macOS may show a Gatekeeper warning
+the first time you open it.
