@@ -6,6 +6,10 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+
+if sys.version_info < (3, 11):
+    sys.exit('KoShelf requires Python 3.11 or later.')
+
 import urllib.error
 import urllib.request
 import local_session
@@ -31,19 +35,63 @@ def running_identity(port, challenge):
     return identity
 
 
+def verified_secret(port, identity, challenge):
+    secret = local_session.ticket_secret(port)
+    proof = identity.get('proof')
+    if not local_session.valid_secret(proof) or not secrets.compare_digest(proof, local_session.proof(secret, port, challenge)):
+        raise ValueError('Unexpected service proof')
+    return secret
+
+
+def running_instance():
+    """Find a browser service this user already started, on any port."""
+    try:
+        tickets = sorted(local_session.session_directory().glob('session-*'))
+    except OSError:
+        return None
+    for ticket in tickets:
+        port = ticket.name.removeprefix('session-')
+        if not port.isdigit() or not 0 < int(port) <= 65535:
+            continue
+        challenge = secrets.token_hex(32)
+        try:
+            identity = running_identity(int(port), challenge)
+            if identity is not None:
+                return int(port), verified_secret(int(port), identity, challenge)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def installed_app():
+    for applications in (Path('/Applications'), Path.home() / 'Applications'):
+        if (applications / 'KoShelf.app').is_dir():
+            return applications / 'KoShelf.app'
+    return None
+
+
 def main():
     parser=argparse.ArgumentParser(prog='koshelf', description='Open the KoShelf desktop app or launch the local browser interface.')
     parser.add_argument('--browser', action='store_true', help='Open the browser version instead of the macOS app')
     parser.add_argument('--library',help='Open a specific folder instead of the Mac library')
-    parser.add_argument('--port',type=int,default=8765)
+    parser.add_argument('--port', type=int, help='Serve the browser interface on this local port (default: any free port)')
     args=parser.parse_args()
-    if not 0 <= args.port <= 65535:
+    if args.port is not None and not 0 <= args.port <= 65535:
         parser.error('The port must be between 0 and 65535.')
-    native = Path.home() / 'Applications' / 'KoShelf.app'
-    if sys.platform == 'darwin' and native.is_dir() and not args.browser and not args.library and args.port == 8765:
+    native = installed_app() if sys.platform == 'darwin' else None
+    if native and not args.browser and not args.library and args.port is None:
         subprocess.run(['/usr/bin/open', str(native)], check=True)
         print('Opened KoShelf.app')
         return
+    if args.port is None:
+        # A random port keeps web pages from guessing where the service listens.
+        existing = None if args.library else running_instance()
+        if existing:
+            port, secret = existing
+            local_session.open_browser(port, secret)
+            print(f'Opened existing KoShelf: http://127.0.0.1:{port}')
+            return
+        args.port = 0
     challenge = secrets.token_hex(32)
     try:
         identity = running_identity(args.port, challenge) if args.port else None
@@ -51,10 +99,7 @@ def main():
         parser.exit(1, 'This port is occupied by an unrecognized service. Stop it or use --port 8766.\n')
     if identity is not None:
         try:
-            secret = local_session.ticket_secret(args.port)
-            proof = identity.get('proof')
-            if not local_session.valid_secret(proof) or not secrets.compare_digest(proof, local_session.proof(secret, args.port, challenge)):
-                raise ValueError('Unexpected service proof')
+            secret = verified_secret(args.port, identity, challenge)
         except (OSError, ValueError):
             parser.exit(1, 'Could not verify a browser session on this port. Stop it or use --port 8766.\n')
         if args.library:

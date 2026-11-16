@@ -322,7 +322,7 @@ def _apply_change(source, target, desired, previous, backup, rename):
                 shutil.rmtree(staging, ignore_errors=True)
 
 
-def apply(mac, cloud, state, token, choices, *, rename):
+def apply(mac, cloud, state, token, choices, *, rename, progress=None):
     state = Path(state)
     roots, trees, baseline, current_token, identities = _snapshot(mac, cloud, state)
     if token != current_token:
@@ -353,7 +353,9 @@ def apply(mac, cloud, state, token, choices, *, rename):
                   "kind": "delete" if desired is None else "replace" if previous else "copy"}
         queued.append((change, desired, previous))
     queued.sort(key=lambda entry: entry[0]["kind"] == "delete")
-    for change, desired, previous in queued:
+    for index, (change, desired, previous) in enumerate(queued):
+        if progress:
+            progress(index, len(queued))
         relative, source_side, target_side = (change[key] for key in ("path", "source", "target"))
         try:
             if change["kind"] == "delete" and errors:

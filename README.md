@@ -1,6 +1,6 @@
 # KoShelf
 
-KoShelf organizes EPUBs on your Mac and in the `books` folder of a USB-mounted Kindle running KOReader. The desktop app is for macOS. The browser interface runs locally on macOS and Linux with Python 3.10 or later and uses only the Python standard library.
+KoShelf organizes EPUBs on your Mac and in the `books` folder of a USB-mounted Kindle running KOReader. The desktop app is for macOS. The browser interface runs locally on macOS and Linux with Python 3.11 or later and uses only the Python standard library.
 
 ## Install from a disk image
 
@@ -10,24 +10,24 @@ KoShelf organizes EPUBs on your Mac and in the `books` folder of a USB-mounted K
 
 Download the latest [KoShelf disk image](https://github.com/DrewRichard7/koshelf-public/releases/latest).
 
-Open the KoShelf disk image and drag **KoShelf** into **Applications**. Launch that copy from Finder or Raycast. The portable package supports Apple silicon and Intel Macs running macOS 12 or later, and includes Python and the Kindle converter. Transfer support depends on the Kindle appearing as a mounted USB drive.
+Open the KoShelf disk image and drag **KoShelf** into **Applications**. Launch that copy from Finder or Raycast. The portable package includes Python and the Kindle converter for Apple silicon and Intel Macs running macOS 12 or later. It has been tested on Apple silicon only. The Intel build is included but untested, because no Intel Mac was available. Transfer support depends on the Kindle appearing as a mounted USB drive.
 
-The disk image includes [Read before installing](READ-BEFORE-INSTALLING.txt). The app uses an ad hoc signature, so macOS may show a Gatekeeper warning the first time you open it.
+The disk image includes [Read before installing](READ-BEFORE-INSTALLING.txt). The app uses an ad hoc signature, so macOS may show a Gatekeeper warning the first time you open it. Control-click the app and choose **Open** instead of turning off Gatekeeper. Each release lists the disk image’s SHA-256 checksum. Compare it with `shasum -a 256 KoShelf-<version>-macOS.dmg` before opening a copy you received from someone else.
 
 ## Open KoShelf
 
-On a Mac with the desktop app installed, search for **KoShelf** in Raycast or open `~/Applications/KoShelf.app`. The app starts its own local service on an available port. **Command-Q** closes the app and waits for active file requests.
+On a Mac with the desktop app installed, search for **KoShelf** in Raycast or open it from `/Applications` or `~/Applications`. The app starts its own local service on an available port. **Command-Q** closes the app and waits for active file requests.
 
 From a checkout, use the following commands:
 
 ```sh
 ./koshelf                       # Desktop app when installed, otherwise browser
 ./koshelf --browser             # Default browser
-./koshelf --browser --port 8766 # Alternate local port
+./koshelf --browser --port 8766 # Fixed local port instead of a random one
 ./koshelf --library /path/to/books
 ```
 
-Keep the terminal open while using the browser service. Press Control-C to stop it. To use `koshelf` from any directory, put a symlink to the wrapper in a directory on your PATH, such as `~/.local/bin`. `Launch.command` also works from Finder.
+Browser mode listens on a random local port. Running `./koshelf --browser` again reopens the service you already started. Keep the terminal open while using the browser service. Press Control-C to stop it. To use `koshelf` from any directory, put a symlink to the wrapper in a directory on your PATH, such as `~/.local/bin`. `Launch.command` also works from Finder.
 
 ## Browse and organize
 
@@ -73,17 +73,17 @@ With both libraries available, **Sync libraries** reviews proposed changes in bo
 
 When you open an explicit folder with `--library`, **Back up library** copies into `~/KoShelf Library`. It preserves relative paths and empty folders, skips identical files, and saves changed same-path files under a content-based suffix. Keep the source connected through the result summary.
 
-The desktop app stores logs and recovery data under `~/Library/Application Support/KoShelf/`. The browser service defaults to `state/` in the checkout. `moves.jsonl` records metadata backup paths, and `metadata-backups/` holds original EPUBs. To restore a metadata backup, locate the original path in the journal, quit KoShelf, and copy the saved EPUB over that path using the original filename. Backups accumulate until you manage them.
+The desktop app stores logs and recovery data under `~/Library/Application Support/KoShelf/`. The browser service defaults to `state/` in the checkout. Set `KOSHELF_STATE_DIR` to use another folder. The state folder also holds `metadata-cache.json` and `sync-digests.json`, which let KoShelf skip rereading unchanged books. Deleting them is safe. `moves.jsonl` records metadata backup paths, and `metadata-backups/` holds original EPUBs. To restore a metadata backup, locate the original path in the journal, quit KoShelf, and copy the saved EPUB over that path using the original filename. Backups accumulate until you manage them.
 
 ## Privacy and security
 
-KoShelf serves its interface on this computer’s loopback address. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry, and the bundled Kindle converter runs offline. iCloud Drive sync is optional and uses the folder you select.
+KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. iCloud Drive sync is optional and uses the folder you select.
 
-Use a folder dedicated to your books. The original backup workflow can copy companion files from the selected library, including KOReader reading data. KoShelf checks EPUB structure and limits resource usage when processing files. EPUBs and fonts still come from outside KoShelf and may also be parsed by your reader.
+Use a folder dedicated to your books. The original backup workflow can copy companion files from the selected library, including KOReader reading data. KoShelf checks EPUB structure and limits resource usage when processing files. EPUBs and fonts still come from outside KoShelf and may also be parsed by your reader. KoShelf works only with DRM-free books and refuses encrypted or signed EPUBs.
 
 ## Build and check
 
-On macOS, install the Apple Command Line Tools and make Python 3.10 or later and Go available. The build uses Go 1.26.11 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python already installed on the Mac.
+On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.26.11 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
 
 ```sh
 ./scripts/build-macos.sh
@@ -94,11 +94,17 @@ For a browser checkout without a macOS build, build the converter with `mkdir -p
 
 Quit the installed app before copying `build/KoShelf.app` to `~/Applications/`. The smoke test starts the packaged service on a local port using a temporary library.
 
-Run `./scripts/package-macos.sh` to build the self-contained installer in `dist/`. It checks the two standalone Python archives against pinned SHA-256 digests and includes their license files. To smoke-test the portable build with its own interpreter, run `python3 scripts/check-service.py build/portable/KoShelf.app`.
+Run `./scripts/package-macos.sh` to build the self-contained installer in `dist/` and write its SHA-256 checksum beside it. It checks the two standalone Python archives against pinned SHA-256 digests, removes parts of Python that KoShelf doesn’t use, and includes KoShelf’s license, `PythonNotices.txt`, and `KindleConverterNotices.txt`. A portable build runs only its bundled Python. To smoke-test the portable build with its own interpreter, run `python3 scripts/check-service.py build/portable/KoShelf.app`. Before a release, stage the converter the way `scripts/build-kindle-converter.sh` does, then run `govulncheck ./...` in that folder for both `GOARCH=arm64` and `GOARCH=amd64`.
 
 ```sh
-python3 -m unittest discover -q
+python3 -B -m unittest discover -q
 node --check static/app.js
 ```
 
 `app.py` serves the local API and handles EPUB and library operations. `genre_cleanup.py` implements offline genre suggestions. The shared interface lives in `static/`. `launcher.py` starts the desktop app or browser service, and `native/KoShelf.swift` hosts the interface and manages the desktop service. See [TODO.md](TODO.md) for the roadmap.
+
+## License
+
+KoShelf is released under the [MIT License](LICENSE). The Kindle converter and the bundled Python include third-party software under their own licenses. Their notices ship in the app as `KindleConverterNotices.txt` and [`PythonNotices.txt`](notices/PythonNotices.txt).
+
+KoShelf is an independent project. It is not affiliated with or endorsed by Amazon or the KOReader project. Kindle is a trademark of Amazon.com, Inc. or its affiliates.

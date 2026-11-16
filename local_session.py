@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import threading
 import webbrowser
 
 
@@ -70,6 +71,14 @@ def open_browser(port, secret):
     write_private(redirect, '<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer">'
                   f'<meta http-equiv="refresh" content="0;url={url}"><a href="{url}">Open KoShelf</a>')
     webbrowser.open(redirect.as_uri())
+    return redirect
+
+
+def forget_redirect_later(redirect, delay=60):
+    """Remove the credential-bearing redirect once the browser has had time to read it."""
+    timer = threading.Timer(delay, lambda: redirect.unlink(missing_ok=True))
+    timer.daemon = True
+    timer.start()
 
 
 def forget(port, ticket):

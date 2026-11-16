@@ -73,9 +73,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let architecture = "x86_64"
         #endif
         let bundledPython = resources.appendingPathComponent("Python/\(architecture)/bin/python3").path
-        let python = [bundledPython, "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let python = python else { fail("Python 3.10 or later is required on this Mac."); return }
+        let python: String?
+        if FileManager.default.isExecutableFile(atPath: bundledPython) {
+            python = bundledPython
+        } else if Bundle.main.object(forInfoDictionaryKey: "KoShelfRequiresBundledPython") as? Bool == true {
+            // Release builds run only the interpreter they were built and checked with.
+            fail("This copy of KoShelf is missing its bundled Python. Download KoShelf again."); return
+        } else {
+            python = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
+                .first { FileManager.default.isExecutableFile(atPath: $0) && supportedPython($0) }
+        }
+        guard let python = python else { fail("Python 3.11 or later is required on this Mac."); return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = ["-E", "-S", "-B", resources.appendingPathComponent("app.py").path,
@@ -118,6 +126,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self = self, !self.loaded, !self.quitting else { return }
             self.fail("The library service did not start in time. Quit and reopen KoShelf.")
         }
+    }
+
+    func supportedPython(_ path: String) -> Bool {
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: path)
+        check.arguments = ["-I", "-S", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"]
+        check.standardOutput = FileHandle.nullDevice
+        check.standardError = FileHandle.nullDevice
+        do { try check.run() } catch { return false }
+        check.waitUntilExit()
+        return check.terminationStatus == 0
     }
 
     func privateLog(in support: URL) throws -> FileHandle {
@@ -230,6 +249,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if !quitting {
                 quitting = true
                 service.terminate()
+                // The service finishes the current file operation before exiting.
+                // Explain the wait if it takes more than a moment.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, service.isRunning, self.window.attachedSheet == nil else { return }
+                    let alert = NSAlert()
+                    alert.messageText = "Finishing the current operation…"
+                    alert.informativeText = "KoShelf will close as soon as it finishes writing files. Quitting now could leave a partial copy on your Mac or Kindle."
+                    alert.addButton(withTitle: "Keep Waiting")
+                    alert.addButton(withTitle: "Quit Now")
+                    alert.beginSheetModal(for: self.window) { response in
+                        if response == .alertSecondButtonReturn, service.isRunning {
+                            kill(service.processIdentifier, SIGKILL)
+                        }
+                    }
+                }
             }
             return .terminateLater
         }

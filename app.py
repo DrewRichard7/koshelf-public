@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""KoShelf — local EPUB browser and organizer. Python 3.10+."""
+"""KoShelf — local EPUB browser and organizer. Python 3.11+."""
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit('KoShelf requires Python 3.11 or later.')
+
 import argparse
 import base64
 import posixpath
@@ -19,9 +24,10 @@ import socket
 import json
 import shutil
 import tempfile
+import gzip
+import functools
 import hashlib
 from collections import OrderedDict
-from functools import lru_cache
 from xml.dom import minidom
 from html.parser import HTMLParser
 import os
@@ -33,6 +39,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from genre_cleanup import preview_genres, validate_mappings
 import cloud_sync
+import digest_index
 import epub_split
 import kindle_fonts
 import kindle_delivery
@@ -50,7 +57,8 @@ MAX_COVER = 12 * 1024 * 1024
 CACHE = {}
 COVER_CACHE = OrderedDict()
 COVER_CACHE_SIZE = 0
-MAX_COVER_CACHE = 64 * 1024 * 1024
+MAX_COVER_CACHE = 96 * 1024 * 1024
+COVER_LOCK = threading.Lock()
 LOCK = threading.RLock()
 COMPARE_LOCK = threading.Lock()
 DELIVERY_LOCK = threading.Lock()
@@ -62,6 +70,8 @@ ROOT_ID = None
 AUTO_CONNECT = False
 LOCAL_FIRST = False
 EJECTED_VOLUME = None
+# Long transfers publish counts here; /api/progress reads them without the library lock.
+PROGRESS = {'label': '', 'done': 0, 'total': 0}
 JOURNAL = Path(os.environ["KOSHELF_STATE_DIR"]) / "moves.jsonl" if "KOSHELF_STATE_DIR" in os.environ else Path(__file__).parent / "state" / "moves.jsonl"
 
 
@@ -178,22 +188,80 @@ def metadata(path, *, load_cover=True, fallback_title=None, compare_contents=Fal
     return result
 
 
+CACHE_STATE = {'loaded': False, 'dirty': False}
+MAX_SAVED_METADATA = 20000
+
+
+def metadata_cache_path():
+    return JOURNAL.with_name('metadata-cache.json')
+
+
+@functools.cache
+def metadata_format():
+    # Any change to this file invalidates saved metadata, so new fields always appear.
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+
+
+def load_metadata_cache():
+    if CACHE_STATE['loaded']:
+        return
+    CACHE_STATE['loaded'] = True
+    try:
+        with open_state_text(metadata_cache_path()) as stream:
+            data = json.load(stream)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or data.get('format') != metadata_format() or not isinstance(data.get('books'), list):
+        return
+    for entry in data['books']:
+        if (isinstance(entry, list) and len(entry) == 4 and isinstance(entry[0], str)
+                and isinstance(entry[1], int) and isinstance(entry[2], int)
+                and isinstance(entry[3], dict) and isinstance(entry[3].get('title'), str)):
+            CACHE.setdefault((entry[0], entry[1], entry[2]), entry[3])
+
+
+def save_metadata_cache():
+    if not CACHE_STATE['dirty']:
+        return
+    CACHE_STATE['dirty'] = False
+    books = [[*key, {**{k: v for k, v in value.items() if k not in ('contents', 'coverFingerprint')}, 'cover': None}]
+             for key, value in list(CACHE.items())[-MAX_SAVED_METADATA:]]
+    path = metadata_cache_path()
+    try:
+        private_state_directory(path.parent)
+        with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.metadata-', delete=False, encoding='utf-8') as stream:
+            temporary = Path(stream.name)
+            try:
+                os.fchmod(stream.fileno(), 0o600)
+                json.dump({'format': metadata_format(), 'books': books}, stream, separators=(',', ':'))
+                stream.flush()
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        CACHE_STATE['dirty'] = True
+
+
 def cached_cover(path, info):
     global COVER_CACHE_SIZE
     # Include the file's identity so swapping in a different book of the same
     # size and timestamp does not preserve an earlier cover.
     key = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-    if key in COVER_CACHE:
-        COVER_CACHE.move_to_end(key)
-        return COVER_CACHE[key]
+    with COVER_LOCK:
+        if key in COVER_CACHE:
+            COVER_CACHE.move_to_end(key)
+            return COVER_CACHE[key]
+    # Read outside the lock so one slow book does not hold up other covers.
     image = metadata(path)['cover']
-    COVER_CACHE[key] = image
-    if image:
-        COVER_CACHE_SIZE += len(image[1])
-    while COVER_CACHE_SIZE > MAX_COVER_CACHE or len(COVER_CACHE) > 512:
-        _, evicted = COVER_CACHE.popitem(last=False)
-        if evicted:
-            COVER_CACHE_SIZE -= len(evicted[1])
+    with COVER_LOCK:
+        if key not in COVER_CACHE:
+            COVER_CACHE[key] = image
+            if image:
+                COVER_CACHE_SIZE += len(image[1])
+        while COVER_CACHE_SIZE > MAX_COVER_CACHE or len(COVER_CACHE) > 4096:
+            _, evicted = COVER_CACHE.popitem(last=False)
+            if evicted:
+                COVER_CACHE_SIZE -= len(evicted[1])
     return image
 
 
@@ -403,8 +471,9 @@ def warm_kindle(root):
                         with LOCK:
                             if WARM_STOP.is_set() or EJECTED_VOLUME == root.parent:
                                 return
-                            if len(CACHE) < 4096:
-                                CACHE.setdefault(key, details)
+                            if len(CACHE) < 4096 and key not in CACHE:
+                                CACHE[key] = details
+                                CACHE_STATE['dirty'] = True
                 except OSError:
                     continue
     finally:
@@ -532,8 +601,8 @@ def status_sync_plan(mac, kindle, transfers=None):
         except ValueError:
             continue
         digest = edit['digest']
-        if local is None or local.is_symlink() or not local.is_file() or file_digest(local) != digest:
-            matches = [path for path in books.get(edit['size'], []) if file_digest(path) == digest]
+        if local is None or local.is_symlink() or not local.is_file() or sync_digest(local, local.stat()) != digest:
+            matches = [path for path in books.get(edit['size'], []) if sync_digest(path, path.stat()) == digest]
             if len(matches) != 1:
                 continue
             local = matches[0]
@@ -542,7 +611,7 @@ def status_sync_plan(mac, kindle, transfers=None):
             destination = backup_alignment_path(kindle, relative)
         except FileNotFoundError:
             destination = None
-        if (transfers or {}).get(relative) == digest or (destination is not None and destination.is_file() and not destination.is_symlink() and file_digest(destination) == digest):
+        if (transfers or {}).get(relative) == digest or (destination is not None and destination.is_file() and not destination.is_symlink() and sync_digest(destination, destination.stat()) == digest):
             plan[original] = {**edit, 'path': relative}
     return plan
 
@@ -596,6 +665,7 @@ def scan():
     if not connection['connected']:
         return dict(connected=False, root=str(ROOT) if ROOT else None, books=[], folders=[], candidates=discover())
     books, folders, seen = [], [], set()
+    load_metadata_cache()
     status_edits = reading_status_queue() if ROOT == mac_library().resolve() else {}
     device = ROOT_ID[0]
     for base, dirs, files in os.walk(ROOT, followlinks=False):
@@ -616,16 +686,20 @@ def scan():
                 if meta is None:
                     meta = metadata(p, load_cover=False)
                     CACHE[key] = meta
+                    CACHE_STATE['dirty'] = True
                 reading = koreader_reading(p)
                 if rel in status_edits and sync_digest(p, stat) == status_edits[rel]['digest']:
                     reading.update(readingStatus=status_edits[rel]['status'], readingStatusPending=True)
-                books.append({**{k: v for k, v in meta.items() if k != 'cover'}, **reading, 'hasCover': meta.get('hasCover', meta['cover'] is not None), 'path': rel, 'folder': '' if p.parent == ROOT else p.parent.relative_to(ROOT).as_posix(), 'filename': filename, 'size': stat.st_size, 'modified': stat.st_mtime})
+                books.append({**{k: v for k, v in meta.items() if k not in ('cover', 'description')}, **reading, 'hasDescription': bool(meta.get('description')), 'hasCover': meta.get('hasCover', meta['cover'] is not None), 'path': rel, 'folder': '' if p.parent == ROOT else p.parent.relative_to(ROOT).as_posix(), 'filename': filename, 'size': stat.st_size, 'modified': stat.st_mtime})
             except OSError: continue
-    for key in list(CACHE):
-        if Path(key[0]).is_relative_to(ROOT) and key not in seen: del CACHE[key]
+    prefix = str(ROOT).rstrip('/') + '/'
+    for key in [key for key in CACHE if key[0].startswith(prefix) and key not in seen]:
+        del CACHE[key]
     while len(CACHE) > max(4096, len(seen)):
         oldest = next(key for key in CACHE if key not in seen)
         del CACHE[oldest]
+        CACHE_STATE['dirty'] = True
+    save_metadata_cache()
     if not ROOT.is_dir():
         return dict(connected=False, root=str(ROOT), books=[], folders=[], candidates=discover())
     candidates = discover()
@@ -634,8 +708,7 @@ def scan():
     detected_kindle = LOCAL_FIRST and os.sys.platform == 'darwin' and str(ROOT) in kindle_candidates(candidates)
     return dict(connected=True, root=str(ROOT), books=books, folders=folders,
                 candidates=candidates, canEject=detected_kindle or device_info() is not None,
-                localFirst=LOCAL_FIRST, macRoot=str(mac_library().resolve()) if LOCAL_FIRST else None,
-                storage=storage_usage())
+                localFirst=LOCAL_FIRST, macRoot=str(mac_library().resolve()) if LOCAL_FIRST else None)
 
 
 def select_library(path):
@@ -1171,14 +1244,11 @@ def backup_version(path, digest):
     return path.with_name(f'{stem} (backup {digest[:16]}){path.suffix}')
 
 
-@lru_cache(maxsize=8192)
-def cached_sync_digest(path, signature):
-    return file_digest(path)
+DIGESTS = digest_index.DigestIndex(lambda: JOURNAL.with_name('sync-digests.json'), lambda path: file_digest(path))
 
 
 def sync_digest(path, info):
-    return cached_sync_digest(path, (info.st_dev, info.st_ino, info.st_size,
-                                     info.st_mtime_ns, info.st_ctime_ns))
+    return DIGESTS.digest(path, info)
 
 
 MAX_IMPORT = 128 * 1024 * 1024
@@ -1406,32 +1476,50 @@ def sync_needed(root, target):
     def onerror(exc):
         raise exc
 
-    for base, dirs, files in os.walk(root, followlinks=False, onerror=onerror):
-        base = Path(base)
-        out = target / base.relative_to(root)
-        if out.is_symlink() or not out.is_dir():
+    # Plain strings and single lstat calls keep this hot path cheap: the
+    # status check runs it over every file on a USB volume.
+    root_text, target_text = str(root), str(target)
+
+    def regular(path):
+        try:
+            return statmod.S_ISREG(os.lstat(path).st_mode)
+        except OSError:
+            return False
+
+    for base, dirs, files in os.walk(root_text, followlinks=False, onerror=onerror):
+        relative_base = os.path.relpath(base, root_text)
+        relative_base = '' if relative_base == '.' else relative_base
+        out = os.path.join(target_text, relative_base) if relative_base else target_text
+        try:
+            if not statmod.S_ISDIR(os.lstat(out).st_mode):
+                return True
+        except OSError:
             return True
-        dirs[:] = [name for name in dirs if not (base / name).is_symlink()
-                   and (base / name).stat().st_dev == device]
+        kept = []
+        for name in dirs:
+            info = os.lstat(os.path.join(base, name))
+            if not statmod.S_ISLNK(info.st_mode) and info.st_dev == device:
+                kept.append(name)
+        dirs[:] = kept
         for name in files:
             if name.startswith('.koshelf-edit-'):
                 continue
-            source = base / name
-            info = source.lstat()
+            source = os.path.join(base, name)
+            info = os.lstat(source)
             if not statmod.S_ISREG(info.st_mode):
                 continue
-            relative = source.relative_to(root).as_posix()
+            relative = f'{relative_base}/{name}' if relative_base else name
             if relative in archived and sync_digest(source, info) in archived[relative]:
                 continue
-            destination = out / name
-            if destination.is_symlink() or not destination.is_file():
+            destination = os.path.join(out, name)
+            if not regular(destination):
                 return True
-            saved = destination.stat()
+            saved = os.stat(destination)
             digest = sync_digest(source, info)
             if saved.st_size == info.st_size and sync_digest(destination, saved) == digest:
                 continue
-            version = backup_version(destination, digest)
-            if version.is_symlink() or not version.is_file():
+            version = backup_version(Path(destination), digest)
+            if not regular(version):
                 return True
             saved = version.stat()
             if saved.st_size != info.st_size or sync_digest(version, saved) != digest:
@@ -1482,12 +1570,17 @@ def send_to_kindle(kindle, review=None):
     return result
 
 
+def report_progress(label='', done=0, total=0):
+    PROGRESS.update(label=label, done=done, total=total)
+
+
 def copy_to_kindle(mac, kindle, identity, transfers, *, replacements=None, history=None):
     replacements = replacements or {}
     replaced = 0
     copied = 0
     errors = []
-    for relative, checksum in transfers.items():
+    for index, (relative, checksum) in enumerate(transfers.items()):
+        report_progress('Copying to Kindle', index, len(transfers))
         temporary = None
         try:
             current = kindle.stat()
@@ -1714,7 +1807,9 @@ def sync_icloud_library(mac, body):
              'status': 'Interrupted', 'applied': 0, 'skipped': 0, 'actions': []}
     icloud_history(event)
     try:
-        result = cloud_sync.apply(mac, folder, state, token, choices, rename=rename_exclusive)
+        report_progress()
+        result = cloud_sync.apply(mac, folder, state, token, choices, rename=rename_exclusive,
+                                  progress=lambda done, total: report_progress('Syncing with iCloud Drive', done, total))
     except (ValueError, OSError) as exc:
         icloud_history({'id': event['id'], 'status': 'Failed', 'error': str(exc)})
         raise
@@ -2104,13 +2199,18 @@ def kindle_status(root):
                                 or (mac.is_dir() and bool(kindle_import_plan(mac, root)
                                                          or kindle_duplicate_plan(mac, root, {})
                                                          or status_sync_plan(mac, root))))
+    except digest_index.Cancelled:
+        result['cancelled'] = True
     except (OSError, ValueError) as exc:
         result['syncError'] = str(exc)
+    finally:
+        DIGESTS.save()
     return result
 
 
 def backup_library(destination=None, choice=None, review=None, *, source=None, preview=False, two_way=False,
                    archived=None, history=None, skip_folders=(), reviewed_files=None):
+    report_progress()
     """Copy a library snapshot without overwriting its existing backup files."""
     root = library_path('', allow_root=True) if source is None else source
     root_stat = root.lstat()
@@ -2194,6 +2294,8 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
                 and info.st_size == size and file_digest(path) == digest)
 
     def copy_file(source, destination):
+        report_progress('Copying to Mac' if two_way else 'Backing up', PROGRESS['done'] + 1,
+                        len(reviewed_files) if reviewed_files is not None else 0)
         info = source.lstat()
         if not statmod.S_ISREG(info.st_mode) or info.st_dev != device:
             result['ignored'] += 1
@@ -2649,12 +2751,19 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def send(self, data, mime='application/json', status=200):
-        if not isinstance(data, bytes): data = json.dumps(data).encode()
+    def send(self, data, mime='application/json', status=200, cache='no-store'):
+        if not isinstance(data, bytes): data = json.dumps(data, separators=(',', ':')).encode()
+        compress = (mime == 'application/json' and len(data) > 16384
+                    and 'gzip' in self.headers.get('Accept-Encoding', ''))
+        if compress:
+            data = gzip.compress(data, compresslevel=5)
         self.send_response(status)
         self.send_header('Content-Type', mime)
+        if compress:
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Vary', 'Accept-Encoding')
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy', "default-src 'none'; connect-src 'self'; img-src 'self' data: blob:; font-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'")
         # Keep referrers local while preserving WebKit's Origin on local POSTs.
@@ -2754,14 +2863,19 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError, KeyError) as exc:
                 return self.send({'error': str(exc)}, status=400)
         if url.path == '/api/status':
+            # The status poll should never queue behind a long sync or import.
+            if not LOCK.acquire(timeout=0.1):
+                return self.send({'busy': True})
             try:
-                with LOCK:
+                try:
                     state = sync_connection()
                     if LOCAL_FIRST:
                         kindle = kindle_library()
                         state['kindle'] = str(kindle) if kindle else None
                         documents = kindle.parent / 'documents' if kindle else kindle_documents()
                         state['usbKindle'] = usb_kindle_status(documents)
+                finally:
+                    LOCK.release()
                 return self.send(state)
             except (OSError, ValueError) as exc:
                 return self.send({'error': str(exc)}, status=400)
@@ -2780,6 +2894,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(state)
             except (OSError, ValueError) as exc:
                 return self.send({'error': str(exc)}, status=400)
+        if url.path == '/api/progress':
+            return self.send(dict(PROGRESS))
+        if url.path == '/api/description':
+            # The shelf list omits descriptions; the detail view reads one on demand.
+            params = urllib.parse.parse_qs(url.query)
+            try:
+                if params.get('root') != [str(ROOT)]:
+                    raise ValueError('The shelf changed.')
+                path = library_path(params.get('path', [''])[0])
+                info = path.lstat()
+                if path.suffix.lower() != '.epub' or not statmod.S_ISREG(info.st_mode):
+                    raise ValueError('Choose an EPUB.')
+                meta = CACHE.get((str(path), info.st_size, info.st_mtime_ns)) or metadata(path, load_cover=False)
+                return self.send({'description': meta.get('description', '')})
+            except (OSError, ValueError) as exc:
+                return self.send({'error': str(exc)}, status=400)
+        if url.path == '/api/cover':
+            # Covers are read-only, so they do not wait for library operations to finish.
+            root = ROOT
+            if root is None or not root.is_dir(): return self.send({}, status=404)
+            params = urllib.parse.parse_qs(url.query)
+            if 'root' in params and params['root'][0] != str(root):
+                return self.send({}, status=404)
+            rel = params.get('path', [''])[0]
+            try:
+                p = library_path(rel)
+                s = p.stat()
+                if p.suffix.lower() != '.epub' or not statmod.S_ISREG(s.st_mode):
+                    raise ValueError()
+                key = (str(p), s.st_size, s.st_mtime_ns)
+                m = CACHE.get(key)
+                if m and m.get('hasCover') and (image := cached_cover(p, s)):
+                    # The URL names the file's size and modification time, so it never goes stale.
+                    return self.send(image[1], image[0], cache='private, max-age=31536000, immutable')
+            except (OSError, ValueError): pass
+            return self.send({}, status=404)
         with LOCK:
             if url.path == '/api/storage': return self.send(storage_usage())
             if url.path == '/api/library':
@@ -2809,23 +2959,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(find_duplicates(root))
                 except (OSError, ValueError) as exc:
                     return self.send({'error': str(exc)}, status=400)
-            if url.path == '/api/cover':
-                if ROOT is None or not ROOT.is_dir(): return self.send({}, status=404)
-                params = urllib.parse.parse_qs(url.query)
-                if 'root' in params and params['root'][0] != str(ROOT):
-                    return self.send({}, status=404)
-                rel = params.get('path', [''])[0]
-                try:
-                    p = library_path(rel)
-                    s = p.stat()
-                    if p.suffix.lower() != '.epub' or not statmod.S_ISREG(s.st_mode):
-                        raise ValueError()
-                    key = (str(p), s.st_size, s.st_mtime_ns)
-                    m = CACHE.get(key)
-                    if m and m.get('hasCover') and (image := cached_cover(p, s)):
-                        return self.send(image[1], image[0])
-                except (OSError, ValueError): pass
-                return self.send({}, status=404)
         self.send({}, status=404)
 
     def do_POST(self):
@@ -2883,6 +3016,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.read_body(limit - 1))
             if not isinstance(body, dict): raise ValueError('Invalid request')
             with LOCK:
+                report_progress()  # Each operation starts with a clean transfer count.
                 if self.path == '/api/library':
                     select_library(body['path'])
                     return self.send(scan())
@@ -2930,16 +3064,22 @@ class Handler(BaseHTTPRequestHandler):
                     if kindle is None or str(kindle) != body.get('kindle'):
                         raise ValueError('The Kindle changed or disconnected. Reconnect and try again.')
                     if self.path == '/api/eject':
+                        # Stop background reads first so eject never waits on a full comparison.
                         WARM_STOP.set()
+                        DIGESTS.cancel.set()
                         try:
                             with COMPARE_LOCK, WARM_READ_LOCK:
                                 return self.send(eject_library(kindle))
                         finally:
+                            DIGESTS.cancel.clear()
                             WARM_STOP.clear()
                     if self.path == '/api/send-to-kindle':
                         return self.send(send_to_kindle(kindle, body.get('review')))
                     choice = body.get('choice')
-                    return self.send(sync_libraries(kindle, choice, body.get('review'), body.get('useMac')))
+                    try:
+                        return self.send(sync_libraries(kindle, choice, body.get('review'), body.get('useMac')))
+                    finally:
+                        DIGESTS.save()
                 if self.path == '/api/eject':
                     return self.send(eject_library())
                 if self.path == '/api/backup':
@@ -2964,7 +3104,7 @@ def main():
     global ROOT, LOCAL_FIRST
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, help='Books folder, on the Kindle or your computer')
-    parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--port', type=int, default=0, help='Local port for the interface (default: any free port)')
     parser.add_argument('--open', action='store_true', help='Open your default browser')
     parser.add_argument('--session-pipe', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -2979,7 +3119,7 @@ def main():
         if not args.session_pipe:
             ticket = local_session.publish(server.server_port, server.session_secret)
         if args.open:
-            local_session.open_browser(server.server_port, server.session_secret)
+            local_session.forget_redirect_later(local_session.open_browser(server.server_port, server.session_secret))
         print(f'KoShelf: http://127.0.0.1:{server.server_port}', flush=True)
         if args.session_pipe:
             print('KoShelf session: ' + local_session.session_url(server.server_port, server.session_secret), flush=True)

@@ -23,8 +23,15 @@ if [ ! -f "$archive" ]; then
 fi
 printf '%s  %s\n' "$checksum" "$archive" | shasum -a 256 -c -
 tar -xzf "$archive" --strip-components 1 -C "$destination"
-# Python's optional development tools and pip are unused by the service.
-rm -rf "$destination/include" "$destination/lib/python3.13/ensurepip" \
-    "$destination/lib/python3.13/site-packages"
+# The service needs only the standard library. Development tools, pip, the
+# test suite, and Tk (with its separately licensed Tcl/Tk libraries) are
+# removed to shrink the download and the code shipped to other Macs.
+library="$destination/lib/python3.13"
+rm -rf "$destination/include" "$destination/share" "$library/ensurepip" "$library/site-packages" \
+    "$library/test" "$library/idlelib" "$library/tkinter" "$library/turtledemo" "$library/turtle.py" \
+    "$library/pydoc_data" "$library/lib-dynload"/_tkinter.* "$library/lib-dynload"/_dbm.* \
+    "$destination/lib"/libtcl* "$destination/lib"/libtk* "$destination/lib"/tcl* "$destination/lib"/tk* \
+    "$destination/lib"/itcl* "$destination/lib"/thread* "$destination/lib/pkgconfig" "$destination/bin/idle"* \
+    "$destination/bin/pydoc"* "$destination/bin/pip"* "$destination/bin/python3"*-config
 find "$destination" -type f \( -name '*.dylib' -o -name '*.so' -o -path '*/bin/python3.13' \) \
     -exec codesign --force --sign - {} +

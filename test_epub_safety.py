@@ -166,7 +166,8 @@ class EpubSafetyTests(unittest.TestCase):
 
         def run(args, **kwargs):
             self.path.write_bytes(b'Another process replaced the source')
-            _, staged, destination = map(Path, args)
+            *command, staged, destination = map(Path, args)
+            self.assertEqual(command[-1], Path('/converter'))
             self.assertEqual(staged.name, self.path.name)
             self.assertEqual(staged.read_bytes(), expected)
             self.assertEqual(destination, output)

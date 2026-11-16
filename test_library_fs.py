@@ -14,6 +14,9 @@ class LibraryFilesystemTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.base = Path(temp.name).resolve()
+        journal = patch.object(app, 'JOURNAL', self.base / '.state' / 'moves.jsonl')
+        journal.start()
+        self.addCleanup(journal.stop)
 
     def test_scan_ignores_epub_named_fifo(self):
         os.mkfifo(self.base / 'Blocked.epub')

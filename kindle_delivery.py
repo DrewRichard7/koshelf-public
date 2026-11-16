@@ -154,6 +154,37 @@ def destination(documents, source):
     return documents / cleaned
 
 
+SANDBOX_EXEC = '/usr/bin/sandbox-exec'
+
+
+def sandbox_string(path):
+    return '"' + str(path).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def sandboxed(executable, workspace):
+    """Run the converter without network access or writes outside its workspace.
+
+    The converter parses untrusted EPUBs, so on macOS it may read only system
+    files, its own binary, and the private workspace that holds the checked copy.
+    """
+    if not os.path.exists(SANDBOX_EXEC):
+        return [executable]
+    workspace = os.path.realpath(workspace)
+    binary = os.path.realpath(executable)
+    home = os.path.realpath(os.path.expanduser('~'))
+    profile = '\n'.join([
+        '(version 1)',
+        '(allow default)',
+        '(deny network*)',
+        '(deny file-write*)',
+        f'(allow file-write* (subpath {sandbox_string(workspace)}) (literal "/dev/null"))',
+        f'(deny file-read* (subpath {sandbox_string(home)}) (subpath "/Volumes"))',
+        f'(allow file-read* (subpath {sandbox_string(workspace)}) (literal {sandbox_string(binary)}))',
+    ])
+    # The converter starts in its workspace, so always pass the resolved binary path.
+    return [SANDBOX_EXEC, '-p', profile, binary]
+
+
 def convert(source, output, executable):
     # The converter must read the exact bytes we checked even if the source
     # is replaced by another application or an iCloud download in the meantime.
@@ -169,7 +200,7 @@ def convert(source, output, executable):
         check_epub(staged)
         with tempfile.TemporaryFile(dir=directory) as errors:
             try:
-                result = subprocess.run([executable, str(staged), str(output)], check=False,
+                result = subprocess.run([*sandboxed(executable, output.parent), str(staged), str(output)], check=False,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                         stderr=errors, cwd=directory, timeout=300,
                                         env={'HOME': directory, 'TMPDIR': directory, 'PATH': '/usr/bin:/bin',

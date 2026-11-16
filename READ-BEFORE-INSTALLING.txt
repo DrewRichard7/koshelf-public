@@ -8,5 +8,20 @@ It's a personal project I'm sharing with friends. Testing and review have
 been limited. KoShelf can move and modify files on your Mac and Kindle,
 so keep a separate backup of your library before using it.
 
+KoShelf has been tested on Apple silicon Macs only. The Intel build is
+included but untested.
+
 The app uses an ad hoc signature. macOS may show a Gatekeeper warning
 the first time you open it.
+
+To open it the first time, Control-click KoShelf and choose Open.
+Don't turn off Gatekeeper for your whole Mac.
+
+If someone sent you this disk image, compare its checksum with the one
+listed on the KoShelf release page before opening it:
+
+    shasum -a 256 KoShelf-<version>-macOS.dmg
+
+KoShelf is released under the MIT License. It is an independent project,
+not affiliated with or endorsed by Amazon or the KOReader project.
+Kindle is a trademark of Amazon.com, Inc. or its affiliates.

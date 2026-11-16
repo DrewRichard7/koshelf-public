@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 import app
 
 CONTAINER = '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>'
@@ -24,7 +25,13 @@ class LibraryTests(unittest.TestCase):
         app.AUTO_CONNECT = False
         app.select_library(Path(self.temp.name))
         app.CACHE.clear()
-    def tearDown(self): self.temp.cleanup()
+        self.state = tempfile.TemporaryDirectory()
+        self.journal = patch.object(app, 'JOURNAL', Path(self.state.name) / 'moves.jsonl')
+        self.journal.start()
+    def tearDown(self):
+        self.journal.stop()
+        self.state.cleanup()
+        self.temp.cleanup()
     def test_epub3_metadata_cover_and_folders(self):
         d=app.ROOT/'Fantasy';d.mkdir();epub(d/'book.epub')
         data=app.scan();b=data['books'][0]
@@ -59,5 +66,14 @@ class LibraryTests(unittest.TestCase):
         app.scan();app.scan()
         self.assertEqual(p.read_bytes(),before);self.assertEqual(p.stat().st_mtime_ns,mtime)
         self.assertEqual([x.name for x in app.ROOT.iterdir()],['book.epub'])
+    def test_metadata_survives_relaunch_without_rereading(self):
+        epub(app.ROOT/'book.epub')
+        title=app.scan()['books'][0]['title']
+        app.CACHE.clear();app.CACHE_STATE['loaded']=False
+        with patch.object(app,'metadata',side_effect=AssertionError('reread')):
+            book=app.scan()['books'][0]
+        self.assertEqual(book['title'],title)
+        self.assertNotIn('description',book)
+        self.assertEqual((Path(self.state.name)/'metadata-cache.json').stat().st_mode&0o777,0o600)
 
 if __name__=='__main__': unittest.main()

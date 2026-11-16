@@ -14,4 +14,7 @@ ln -s /Applications "$staging/image/Applications"
 hdiutil create -volname KoShelf -format UDZO -srcfolder "$staging/image" "$staging/KoShelf.dmg"
 hdiutil verify "$staging/KoShelf.dmg"
 mv -f "$staging/KoShelf.dmg" "$destination"
+# Publish this checksum with the release so people can verify their download.
+(cd "$(dirname "$destination")" && shasum -a 256 "$(basename "$destination")" > "$(basename "$destination").sha256")
 printf 'Packaged %s\n' "$destination"
+cat "$destination.sha256"

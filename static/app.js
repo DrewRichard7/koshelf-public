@@ -71,17 +71,39 @@ function loadCover(image) {
       if (!response.ok) throw Error('Cover unavailable.');
       const data = await response.blob();
       if (!image.isConnected) return;
-      const url = URL.createObjectURL(data);
+      const url = URL.createObjectURL(await shrinkCover(data));
+      image.src = url;
       try {
-        image.src = url;
         await image.decode();
         image.style.visibility = '';
       } finally {
-        URL.revokeObjectURL(url);
+        // Shelf cards are reused, so their covers stay in memory until the card is released.
+        if (image.closest('#grid')) image.dataset.objectUrl = url;
+        else URL.revokeObjectURL(url);
       }
     })().catch(() => image.remove());
   }
   return request.loading;
+}
+
+// Shelf tiles are about 165px wide; keeping full-size scans decoded wastes memory.
+async function shrinkCover(blob) {
+  const width = 480;
+  let bitmap;
+  try { bitmap = await createImageBitmap(blob); } catch { return blob; }
+  try {
+    if (bitmap.width <= width * 1.25) return blob;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = Math.max(1, Math.round(bitmap.height * width / bitmap.width));
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#e5e4da';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return await new Promise(resolve => canvas.toBlob(result => resolve(result || blob), 'image/jpeg', 0.88));
+  } finally {
+    bitmap.close();
+  }
 }
 
 const coverObserver = new IntersectionObserver(entries => {
@@ -101,7 +123,7 @@ function cover(book, deferred = false) {
     const image = el('img');
     image.alt = 'Cover of ' + book.title;
     image.style.visibility = 'hidden';
-    const query = new URLSearchParams({path: book.path, root: library.root, v: book.modified});
+    const query = new URLSearchParams({path: book.path, root: library.root, v: book.modified, s: book.size});
     coverRequests.set(image, {path: '/api/cover?' + query});
     c.append(image);
     if (!deferred) void loadCover(image);
@@ -161,7 +183,7 @@ async function checkConnection() {
   const response=await shelfRequest('/api/status');
   if(!response.ok)throw Error('Could not read connection status');
   const state=await response.json();
-  if(request!==deviceRequest)return null;
+  if(request!==deviceRequest||state.busy)return null;
   if (state.usbKindle?.device !== device.usbKindle?.device) {
     if ($('font-dialog').open && !fontWorking) void refreshFonts();
     if ($('kindle-delivery-dialog').open && !busy) void checkKindleDelivery();
@@ -181,18 +203,21 @@ async function checkConnection() {
   return state;
 }
 async function compareLibraries(kindle, force=false) {
-  if(comparing||(!force&&Date.now()-comparedAt<8000))return;
+  // Checks are stat-only for unchanged files; repeat after a minute or when something changes.
+  if(comparing||(!force&&Date.now()-comparedAt<60000))return;
   comparing=true;
+  let finished=true;
   try{
     const response=await shelfRequest('/api/sync-status');
     if(!response.ok)throw Error('Could not compare libraries.');
     const result=await response.json();
+    if(result.cancelled){finished=false;return;}
     if(device.kindle===kindle&&result.kindle===kindle){
       comparison=result;Object.assign(device,result);renderConnection();
     }
   }catch(err){
     if(device.kindle===kindle){comparison={syncError:err.message};Object.assign(device,comparison);renderConnection();}
-  }finally{comparing=false;if(device.kindle===kindle)comparedAt=Date.now();}
+  }finally{comparing=false;if(device.kindle===kindle&&finished)comparedAt=Date.now();}
 }
 async function openLibrary(path, present=update=>update()) {
   const response=await shelfRequest('/api/library',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
@@ -494,6 +519,19 @@ function compareSeriesPositions(a, b) {
   return 0;
 }
 
+// Storage totals walk every file, so they load after the shelf appears.
+let storageRequest = null;
+function loadStorage(shelf) {
+  if (storageRequest?.shelf === shelf) return;
+  const request = {shelf};
+  storageRequest = request;
+  shelfRequest('/api/storage').then(r => r.ok ? r.json() : null).catch(() => null).then(storage => {
+    if (storageRequest !== request || library !== shelf) return;
+    shelf.storage = storage;
+    render();
+  });
+}
+
 function render() {
   document.body.classList.toggle('waiting',!library.connected);
   renderConnection();
@@ -513,6 +551,7 @@ function render() {
   $('heading').textContent=folder===null?'Your bookshelf':folder===''?'Books in root':folder.split('/').pop();
   $('subtitle').textContent=library.connected?`${library.books.length} EPUB${library.books.length===1?'':'s'} · A little space to explore your library.`:'Connect your Kindle, or choose a folder to begin.';
   $('root').textContent=library.root||'No folder selected';
+  if (library.connected && library.storage === undefined) loadStorage(library);
   renderStorage();
   $('folders').replaceChildren();
   for(const f of ['',...library.folders]) {
@@ -567,53 +606,21 @@ function render() {
   renderSelection();
   $('results').textContent=`${books.length} book${books.length===1?'':'s'}`;
   coverObserver.disconnect();
-  $('grid').replaceChildren();
-  const coverCards = [];
-  for (const book of books) {
-    const card = el('button', null, 'book');
-    const art = cover(book, true);
-    card.append(art, el('h3', book.title), el('div', book.author, 'author'), el('div', book.folder || 'EPUB', 'book-path'));
-    if (book.series) card.append(el('div', seriesLabel(book), 'book-series'));
-    if (book.readingStatus) card.append(readingProgress(book));
-    card.draggable = !selectionMode && !busy && library.connected;
-    if (selectionMode) {
-      const check = el('span', null, 'book-check');
-      check.setAttribute('aria-hidden', 'true');
-      art.append(check);
-      const update = () => {
-        const selected = selectedBooks.has(book.path);
-        card.setAttribute('aria-pressed', String(selected));
-        check.textContent = selected ? '✓' : '';
-      };
-      update();
-      card.onclick = () => {
-        if (busy) return;
-        if (selectedBooks.has(book.path)) selectedBooks.delete(book.path);
-        else selectedBooks.add(book.path);
-        update();
-        renderSelection();
-      };
-    } else {
-      card.onclick = () => { if (!busy) details(book); };
-      card.title = 'Drag to a folder, or click for details';
-      card.addEventListener('dragstart', event => {
-        if (busy) { event.preventDefault(); return; }
-        dragged = book;
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('application/x-kindle-shelf', book.path);
-        card.classList.add('dragging');
-        document.body.classList.add('drag-active');
-      });
-      card.addEventListener('dragend', () => {
-        dragged = null;
-        document.body.classList.remove('drag-active');
-        document.querySelectorAll('.drop-over,.dragging').forEach(node => node.classList.remove('drop-over', 'dragging'));
-      });
-    }
-    $('grid').append(card);
-    if (book.hasCover) coverCards.push(art);
+  const cards = books.map(bookCard);
+  const grid = $('grid');
+  if (cards.length !== grid.children.length || cards.some((entry, index) => grid.children[index] !== entry.card)) {
+    // Reusing existing cards keeps covers loaded and avoids rebuilding the shelf on every keystroke.
+    grid.replaceChildren(...cards.map(entry => entry.card));
   }
-  for (const art of coverCards) {
+  for (const entry of cards) {
+    entry.card.draggable = !selectionMode && !busy && library.connected;
+    entry.update?.();
+  }
+  if (cardCache.size > library.books.length + 200) {
+    for (const [path, entry] of cardCache) if (!available.has(path)) { releaseCard(entry); cardCache.delete(path); }
+  }
+  for (const {art, book} of cards) {
+    if (!book.hasCover || art.querySelector('img')?.style.visibility === '') continue;
     const bounds = art.getBoundingClientRect();
     if (bounds.bottom >= 0 && bounds.top <= innerHeight + 200) {
       void loadCover(art.querySelector('img'));
@@ -628,6 +635,69 @@ function render() {
     $('connect').hidden=library.connected;
   }
 }
+const cardCache = new Map();
+
+function cardKey(book) {
+  return [library.root, selectionMode, book.title, book.author, book.folder, book.series, book.seriesPosition,
+    book.readingStatus, book.readingProgress, book.readingStatusPending, book.modified, book.hasCover].join('\u0000');
+}
+
+function releaseCard(entry) {
+  const image = entry.art.querySelector('img');
+  if (image?.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+}
+
+function bookCard(book) {
+  const key = cardKey(book);
+  const cached = cardCache.get(book.path);
+  if (cached && cached.key === key) {
+    cached.book = book;
+    return cached;
+  }
+  if (cached) releaseCard(cached);
+  const card = el('button', null, 'book');
+  const art = cover(book, true);
+  const entry = {key, card, art, book};
+  card.append(art, el('h3', book.title), el('div', book.author, 'author'), el('div', book.folder || 'EPUB', 'book-path'));
+  if (book.series) card.append(el('div', seriesLabel(book), 'book-series'));
+  if (book.readingStatus) card.append(readingProgress(book));
+  if (selectionMode) {
+    const check = el('span', null, 'book-check');
+    check.setAttribute('aria-hidden', 'true');
+    art.append(check);
+    entry.update = () => {
+      const selected = selectedBooks.has(entry.book.path);
+      card.setAttribute('aria-pressed', String(selected));
+      check.textContent = selected ? '✓' : '';
+    };
+    card.onclick = () => {
+      if (busy) return;
+      if (selectedBooks.has(entry.book.path)) selectedBooks.delete(entry.book.path);
+      else selectedBooks.add(entry.book.path);
+      entry.update();
+      renderSelection();
+    };
+  } else {
+    card.onclick = () => { if (!busy) details(entry.book); };
+    card.title = 'Drag to a folder, or click for details';
+    card.addEventListener('dragstart', event => {
+      if (busy) { event.preventDefault(); return; }
+      dragged = entry.book;
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/x-kindle-shelf', entry.book.path);
+      card.classList.add('dragging');
+      document.body.classList.add('drag-active');
+    });
+    card.addEventListener('dragend', () => {
+      dragged = null;
+      document.body.classList.remove('drag-active');
+      document.querySelectorAll('.drop-over,.dragging').forEach(node => node.classList.remove('drop-over', 'dragging'));
+    });
+  }
+  cardCache.set(book.path, entry);
+  return entry;
+}
+
 const readingLabels = {reading: 'Reading', complete: 'Finished', abandoned: 'On hold'};
 
 function readingProgress(book, showLabel = true) {
@@ -652,6 +722,7 @@ function readingProgress(book, showLabel = true) {
 
 function renderDuplicateGroups(results) {
   const content = $('duplicates-results');
+  const shelf = new Map(library.books.map(item => [item.path, item]));
   for (const [groups, title, description] of [
     [results.exact, 'Exact copies', 'These EPUB files are identical.'],
     [results.possible, 'Possible matches', 'The titles and authors match. These may be different editions or versions.']
@@ -667,7 +738,7 @@ function renderDuplicateGroups(results) {
         const row = el('li');
         const path = el('span', book.path);
         const action = el('button', 'Book details', 'button');
-        const current = library.books.find(item => item.path === book.path);
+        const current = shelf.get(book.path);
         action.type = 'button';
         action.disabled = !current;
         action.setAttribute('aria-label', `Book details for ${book.path}`);
@@ -966,11 +1037,19 @@ async function runCloudTask(message, task) {
   $('icloud-connected').inert = true;
   $('icloud-review').inert = true;
   for (const id of ['icloud-close', 'icloud-preview', 'icloud-apply']) $(id).disabled = true;
+  const stopProgress = watchProgress((label, done, total) => {
+    if (!total) return;
+    $('icloud-progress').max = total;
+    $('icloud-progress').value = done;
+    $('icloud-status').textContent = `${label} · ${Math.min(done + 1, total)} of ${total}`;
+  });
   try {
     await task(session);
   } catch (error) {
     $('icloud-status').textContent = error.message;
   } finally {
+    stopProgress();
+    $('icloud-progress').removeAttribute('value');
     session.pending = false;
     setBusy(false);
     $('icloud-progress').hidden = true;
@@ -1633,6 +1712,14 @@ function details(b) {
   }
   $('detail-content').append(dl);
   if(b.description)$('detail-content').append(el('p',b.description,'description'));
+  else if(b.hasDescription){
+    const description=el('p',null,'description');
+    $('detail-content').append(description);
+    const query=new URLSearchParams({path:b.path,root:library.root});
+    shelfRequest('/api/description?'+query).then(r=>r.ok?r.json():null).then(data=>{
+      if(data?.description&&description.isConnected)description.textContent=data.description;else description.remove();
+    }).catch(()=>description.remove());
+  }
   if(b.warning)$('detail-content').append(el('p',b.warning));
   const move=el('button','Move to folder…','button primary');move.onclick=()=>{$('detail').close();openMove(b);};$('detail-content').append(move);
   const edit=el('button','Edit metadata…','button');edit.onclick=()=>{$('detail').close();metadataSelection=b;resetCover();$('metadata-title').value=b.title;$('metadata-authors').value=(b.authors?.length?b.authors:[b.author]).join('\n');$('metadata-genres').value=(b.genres||[]).join('\n');$('metadata-series').value=b.series||'';$('metadata-position').value=b.seriesPosition||'';$('metadata-position').disabled=!b.series;$('metadata-error').textContent='';$('metadata-dialog').showModal();};$('detail-content').append(edit);
@@ -1677,7 +1764,7 @@ $('choose-form').onsubmit=async e=>{
   catch(e){$('choose-error').textContent=e.message;}
   finally{submit.disabled=false;}
 };
-$('search').oninput=render;$('genre-filter').onchange=render;$('series-filter').onchange=render;$('reading-filter').onchange=render;$('sort').onchange=render;$('change').onclick=choose;$('connect').onclick=choose;
+let searchTimer=0;$('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(render,120);};$('genre-filter').onchange=render;$('series-filter').onchange=render;$('reading-filter').onchange=render;$('sort').onchange=render;$('change').onclick=choose;$('connect').onclick=choose;
 $('all').onclick=()=>{folder=null;render();};$('cancel').onclick=()=>$('chooser').close();$('close-detail').onclick=()=>$('detail').close();
 for(const id of ['chooser','detail','folder-dialog','move-dialog','remove-dialog','metadata-dialog','bulk-dialog','bulk-move-dialog'])$(id).addEventListener('click',e=>{if(e.target===$(id)&&!bulkSaving){const r=$(id).getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$(id).close();}});
 const shelfActions = $('shelf-actions');
@@ -1695,14 +1782,19 @@ shelfActions.addEventListener('keydown', event => {
   }
 });
 window.addEventListener('focus', () => {
+  comparedAt=0; // Files may have changed in Finder or on the Kindle while away.
   // Give the file picker time to deliver its selection before rescanning.
   setTimeout(() => {
     if (library.connected && !shelfActions.open && !document.querySelector('dialog[open]')) refresh();
   }, 300);
 });
 
+let idleTicks=0;
 setInterval(async()=>{
-  if(sessionExpired||loading||busy||polling)return;polling=true;
+  if(sessionExpired||loading||busy||polling)return;
+  // Poll about every 2 seconds while KoShelf is in the background.
+  if(!document.hasFocus()&&++idleTicks%3)return;
+  polling=true;
   try {
     const state=await checkConnection();if(!state||busy||loading)return;
     if(state.connected && (!library.connected || state.root!==library.root)) {
@@ -2349,6 +2441,20 @@ function reviewBackup(review, syncing) {
     dialog.showModal();
   });
 }
+// Poll the service's transfer counter while a long sync request is running.
+function watchProgress(show) {
+  let stopped = false;
+  const timer = setInterval(async () => {
+    try {
+      const response = await shelfRequest('/api/progress');
+      if (!response.ok || stopped) return;
+      const {label, done, total} = await response.json();
+      if (label) show(label, done, total);
+    } catch {}
+  }, 600);
+  return () => { stopped = true; clearInterval(timer); };
+}
+
 function syncFeedback(state, title, detail) {
   const feedback=$('sync-feedback');
   feedback.hidden=!state;
@@ -2506,7 +2612,11 @@ $('backup').onclick=async()=>{
       if(!['kindle','backup','merge','copy'].includes(choice))return;
       syncFeedback('working',kindle?'Syncing libraries…':'Backing up library…','Keep your library connected until this finishes.');
       applied=true;
-      r=await mutation(endpoint,{...payload,...selection,review:r.review});
+      const stopProgress=watchProgress((label,done,total)=>{
+        $('sync-detail').textContent=`${label} · ${total?`${Math.min(done+1,total)} of ${total}`:`${done} files`} · Keep your library connected.`;
+      });
+      try{r=await mutation(endpoint,{...payload,...selection,review:r.review});}
+      finally{stopProgress();}
     }
     const incoming = kindle ? r.mac : r;
     const outgoing = kindle ? r.kindle : null;

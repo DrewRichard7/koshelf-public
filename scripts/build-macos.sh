@@ -35,7 +35,14 @@ else
     cp "$scratch/converter-$architecture" "$APP/Contents/MacOS/koshelf-kindle-converter"
 fi
 cp native/Info.plist "$APP/Contents/Info.plist"
-cp app.py genre_cleanup.py cloud_sync.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
+if "$portable"; then
+    /usr/libexec/PlistBuddy -c 'Add :KoShelfRequiresBundledPython bool true' "$APP/Contents/Info.plist"
+    # Ship the license texts for everything the bundled runtime includes.
+    test -s notices/PythonNotices.txt
+    cp notices/PythonNotices.txt "$APP/Contents/Resources/PythonNotices.txt"
+fi
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+cp app.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
 cp epub_safety.py local_session.py "$APP/Contents/Resources/"
 cp static/index.html static/app.js static/style.css static/koshelf-icon.png "$APP/Contents/Resources/static/"
 if [ -f native/KoShelf.icns ]; then cp native/KoShelf.icns "$APP/Contents/Resources/KoShelf.icns"; fi
