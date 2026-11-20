@@ -4,6 +4,8 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **Reading progress syncs in both directions.** When a book's KOReader reading file differs between the Kindle and the Mac, the copy that is further along wins, and a book marked finished counts as 100%. The review shows a card for each book with both progress bars. It labels which copy sends and which receives, and highlights the progress being added, such as **Kindle → Mac · 27% → 30%**. Earlier releases kept the Mac copy and saved the Kindle copy privately, so newer Kindle progress never reached the Mac. KOReader's `.old` backups follow the Kindle without being listed.
+- **Renamed books are recognized.** Sync matches a book by its contents when it has a different name in the same folder, as well as in a different folder. Each matching book is its own choice: use the Mac name, use the Kindle name, or keep both after changing one copy's details. Sync no longer offers to copy a renamed book back as a new file.
 - **Old reading-file recovery copies are pruned.** KOReader rewrites a book's reading file on every session, so each sync saved another copy. Sync now keeps the five newest copies of each reading file. EPUB copies and copies that undo needs are always kept.
 - **Returning to the window no longer reloads the shelf when nothing changed.** KoShelf still checks the library's files, but only by their sizes and dates, and skips sending and redrawing the shelf when its listing is the same. Reading progress is reread only from KOReader files that changed.
 - **The Kindle converter has a memory watchdog.** It is stopped if it uses more than 1 GB, in addition to its sandbox, `GOMEMLIMIT`, and five-minute timeout.

@@ -2607,9 +2607,7 @@ function reviewSync(preview) {
     ['sync-to-mac', preview.toMac, 'Kindle → Mac · New files', preview.toMacPaths],
     ['sync-to-kindle', preview.toKindle, 'Mac → Kindle · New EPUBs', preview.toKindlePaths],
     ['sync-mac-newer', (preview.macNewerPaths || []).length, 'Mac → Kindle · Edited on your Mac', preview.macNewerPaths || []],
-    ['sync-conflict-count', preview.versionDifferenceCount ?? preview.conflicts, 'Different versions at the same path', preview.versionDifferencePaths || preview.conflictPaths],
-    ['sync-folder-count', preview.count, 'Matching books in different folders',
-      preview.examples.map(group => `Kindle: ${group.kindle.join(' · ')} / Mac: ${group.backup.join(' · ')}`)]
+    ['sync-conflict-count', preview.versionDifferenceCount ?? preview.conflicts, 'Different versions at the same path', preview.versionDifferencePaths || preview.conflictPaths]
   ];
   for (const [id, count, label, paths] of sections) {
     $(id).textContent = `${label} (${count})`;
@@ -2618,7 +2616,15 @@ function reviewSync(preview) {
     if (count > paths.length) list.append(el('li', `And ${count - paths.length} more`));
     list.parentElement.open = false;
   }
-  $('sync-folders').hidden = !preview.count;
+  const moveGroups = preview.moveGroups || [];
+  $('sync-folders').hidden = !moveGroups.length;
+  $('sync-folder-count').textContent = `Same book, different name or folder (${moveGroups.length})`;
+  $('sync-move-choices').replaceChildren(...moveGroups.map(syncMoveChoice));
+  const progress = preview.readingProgress || [];
+  $('sync-reading-progress').hidden = !progress.length;
+  $('sync-reading-progress').open = true;
+  $('sync-reading-progress-count').textContent = `Reading progress (${progress.length})`;
+  $('sync-reading-progress-paths').replaceChildren(...progress.map(readingProgressChange));
   $('sync-mac-newer-group').hidden = !(preview.macNewerPaths || []).length;
   const epubConflicts = preview.epubConflictPaths || [];
   const choices = $('sync-use-mac');
@@ -2628,7 +2634,6 @@ function reviewSync(preview) {
   }
   $('sync-conflicts').hidden = !(preview.conflicts || epubConflicts.length);
   $('sync-replacement-hint').hidden = !epubConflicts.length;
-  $('sync-folder-choice').value = 'merge';
   const removals = preview.removeEmptyFolders || [];
   const incomingFolders = preview.incomingEmptyFolders || [];
   $('sync-empty-folders').hidden = !(removals.length || incomingFolders.length);
@@ -2650,15 +2655,110 @@ function reviewSync(preview) {
     item.append(el('div', `Archive · ${remove}`), el('div', `Keep · ${keep}`));
     return item;
   }));
-  $('apply-sync').hidden = !(removals.length || incomingFolders.length || statuses.length || archive.length || preview.toMac || preview.toKindle || preview.count || preview.conflicts || epubConflicts.length || (preview.macNewerPaths || []).length);
+  $('apply-sync').hidden = !(removals.length || incomingFolders.length || statuses.length || archive.length || preview.toMac || preview.toKindle || preview.count || preview.conflicts || epubConflicts.length || (preview.macNewerPaths || []).length || progress.length);
+  updateMoveChoices();
   dialog.returnValue = 'cancel';
   return new Promise(resolve => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'apply'
-      ? {choice: preview.count ? $('sync-folder-choice').value : 'copy',
+      ? {choice: preview.count ? 'align' : 'copy', moves: chosenMoves(),
          useMac: Array.from(choices.querySelectorAll('input:checked'), input => input.value)}
       : null), {once: true});
     dialog.showModal();
   });
+}
+
+function percentLabel(fraction) {
+  if (fraction >= 1) return 'finished';
+  const percent = fraction * 100;
+  return percent > 0 && percent < 1 ? '<1%' : `${Math.min(99, Math.round(percent))}%`;
+}
+
+function progressRow(place, role, from, to) {
+  // A receiving bar shows its current progress muted, and the part sync adds highlighted.
+  const row = el('div', null, `sync-progress-row ${role}`);
+  const name = el('span', place, 'sync-progress-place');
+  name.append(el('small', role === 'source' ? 'sends' : 'receives'));
+  const track = el('span', null, 'book-reading-track');
+  track.setAttribute('aria-hidden', 'true');
+  const current = el('span', null, 'book-reading-fill');
+  current.style.width = `${Math.min(from, 1) * 100}%`;
+  track.append(current);
+  if (role === 'receiver' && to > from) {
+    row.classList.add('gains');
+    const gain = el('span', null, 'sync-progress-gain');
+    gain.style.left = `${from * 100}%`;
+    gain.style.width = `${(Math.min(to, 1) - from) * 100}%`;
+    track.append(gain);
+  }
+  const value = role === 'source' || to === from ? percentLabel(from) : `${percentLabel(from)} → ${percentLabel(to)}`;
+  row.append(name, track, el('span', value, 'book-reading-percent'));
+  return row;
+}
+
+function readingProgressChange({book, winner, kindle, mac}) {
+  const [source, receiver, sent, had] = winner === 'kindle' ? ['Kindle', 'Mac', kindle, mac] : ['Mac', 'Kindle', mac, kindle];
+  const card = el('article', null, 'sync-progress');
+  card.setAttribute('aria-label', sent === had
+    ? `${book}: both at ${percentLabel(sent)}. The ${receiver} copy gets the ${source} reading file.`
+    : `${book}: the ${source} at ${percentLabel(sent)} updates the ${receiver} from ${percentLabel(had)}.`);
+  const heading = el('div', null, 'sync-progress-heading');
+  heading.append(el('strong', book), el('span', `${source} → ${receiver}`, 'sync-progress-direction'));
+  const arrow = el('span', '↓', 'sync-progress-arrow');
+  arrow.setAttribute('aria-hidden', 'true');
+  card.append(heading, progressRow(source, 'source', sent, sent), arrow, progressRow(receiver, 'receiver', had, sent));
+  if (sent === had) card.append(el('p', 'Same progress. Notes or settings differ, so the Kindle copy is used.', 'hint'));
+  return card;
+}
+
+function syncMoveChoice(group) {
+  const card = el('article', null, 'sync-version');
+  const heading = el('h3', group.title || group.mac[0]);
+  heading.id = `move-title-${group.id}`;
+  card.append(heading);
+  card.setAttribute('role', 'radiogroup');
+  card.setAttribute('aria-labelledby', heading.id);
+  if (!group.single) {
+    card.append(el('p', `Several copies exist (Kindle: ${group.kindle.join(' · ')} / Mac: ${group.mac.join(' · ')}). KoShelf leaves them in place.`));
+    return card;
+  }
+  const options = [
+    ['backup', 'Use the Mac name', `Renames the Kindle copy to ${group.mac[0]}`],
+    ['kindle', 'Use the Kindle name', `Renames the Mac copy to ${group.kindle[0]}`],
+    ['both', 'Keep both', 'These files are identical. To keep both, change the title or author of the Mac copy in KoShelf, then sync again.'],
+  ];
+  for (const [value, title, detail] of options) {
+    const label = el('label', null, 'sync-move-option');
+    const radio = el('input');
+    radio.type = 'radio';
+    radio.name = `move-${group.id}`;
+    radio.value = value;
+    radio.dataset.group = group.id;
+    radio.onchange = updateMoveChoices;
+    const text = el('span', title);
+    text.append(el('small', detail));
+    label.append(radio, text);
+    card.append(label);
+  }
+  return card;
+}
+
+function chosenMoves() {
+  const moves = {};
+  for (const input of $('sync-move-choices').querySelectorAll('input:checked')) {
+    if (input.value !== 'both') moves[input.dataset.group] = input.value;
+  }
+  return moves;
+}
+
+function updateMoveChoices() {
+  // Every matching book needs a name, and keeping both needs an edit first.
+  const cards = [...$('sync-move-choices').querySelectorAll('.sync-version')].filter(card => card.querySelector('input'));
+  const ready = cards.every(card => {
+    const chosen = card.querySelector('input:checked');
+    return chosen && chosen.value !== 'both';
+  });
+  $('apply-sync').disabled = !ready;
+  $('apply-sync').title = ready ? '' : 'Choose a name for each matching book first.';
 }
 
 $('backup').onclick=async()=>{
@@ -2701,7 +2801,7 @@ $('backup').onclick=async()=>{
       syncFeedback('');
       const selection = kindle ? await reviewSync(r) : {choice: await reviewBackup(r,false)};
       choice = selection?.choice;
-      if(!['kindle','backup','merge','copy'].includes(choice))return;
+      if(!['kindle','backup','merge','copy','align'].includes(choice))return;
       syncFeedback('working',kindle?'Syncing libraries…':'Backing up library…','Keep your library connected until this finishes.');
       applied=true;
       const stopProgress=watchProgress((label,done,total)=>{
@@ -2718,6 +2818,7 @@ $('backup').onclick=async()=>{
       : `${incoming.copied} copied · ${incoming.skipped} already backed up`;
     const details = [
       summary,
+      outgoing?.readingProgress && `${outgoing.readingProgress} reading positions updated`,
       outgoing?.readingStatuses && `${outgoing.readingStatuses} KOReader statuses updated`,
       outgoing?.removedEmptyFolders && `${outgoing.removedEmptyFolders} empty Kindle folders removed`,
       outgoing?.archived && `${outgoing.archived} Kindle duplicates archived`,
