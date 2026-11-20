@@ -12,7 +12,7 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 - [ ] **In-app updates.** Check for new releases and install them without downloading a new disk image each time. If a full download is unavoidable, make updating simpler than Calibre's.
 - [ ] **Linux support.** Make KoShelf work fully on Linux, including Kindle detection, eject, and the Kindle converter.
 - [ ] **Cross-platform browser version.** Check that browser mode works across platforms and browsers, and decide which platforms to support.
-- [ ] **KOReader plugin for wireless sync.** Build a KOReader plugin that syncs with KoShelf over the local network when the Kindle is awake and nearby.
+- [ ] **Wireless transfer (Wi-Fi or Bluetooth).** Sync with KoShelf without a cable when the Kindle is awake and nearby. This will likely be a KOReader plugin built in its own repository, with KoShelf providing the Mac side. When that repository exists, link it here.
 
 ## Bugs
 
