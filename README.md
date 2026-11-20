@@ -106,7 +106,7 @@ Use a folder dedicated to your books. The original backup workflow can copy comp
 
 On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.26.11 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
 
-Builds are signed with a certificate named `KoShelf Signing` when your keychain has one, and ad hoc otherwise. macOS ties Full Disk Access, which Apple Books features need, to the signature. With ad hoc signing, every build needs the permission granted again. To create the certificate, open Keychain Access, choose **Keychain Access → Certificate Assistant → Create a Certificate…**, enter the name `KoShelf Signing`, and choose **Self-Signed Root** and **Code Signing**. Set `KOSHELF_SIGNING_IDENTITY` to use another identity, and `KOSHELF_VERSION` to label a development build, such as `1.1.2-dev`.
+Builds are signed with a certificate named `KoShelf Signing` when your keychain has one, and ad hoc otherwise. macOS ties Full Disk Access, which Apple Books features need, to the signature. With ad hoc signing, every build needs the permission granted again. To create the certificate, open Keychain Access, choose **Keychain Access → Certificate Assistant → Create a Certificate…**, enter the name `KoShelf Signing`, and choose **Self-Signed Root** and **Code Signing**. Set `KOSHELF_SIGNING_IDENTITY` to use another identity, and `KOSHELF_VERSION` to label a development build, such as `1.2.1-dev`.
 
 ```sh
 ./scripts/build-macos.sh
