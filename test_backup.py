@@ -367,6 +367,78 @@ class BackupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'stored privately'):
             app.undo_sync_action(app.sync_history()[0]['id'], kept[0]['id'])
 
+    def edited_on_mac(self, relative, before, after, *, mac_relative=None):
+        book = self.put(relative, before)
+        mac_book = self.destination / (mac_relative or relative)
+        mac_book.parent.mkdir(parents=True, exist_ok=True)
+        mac_book.write_bytes(after)
+        with open(self.base / 'moves.jsonl', 'a') as journal:
+            journal.write(json.dumps({'operation': 'edit-metadata', 'library': str(self.destination),
+                                      'source': mac_relative or relative,
+                                      'sha256': hashlib.sha256(before).hexdigest(), 'status': 'completed'}) + '\n')
+        os.chmod(self.base / 'moves.jsonl', 0o600)
+        return book
+
+    def test_edited_book_review_has_no_empty_conflict_section(self):
+        self.destination.mkdir()
+        self.edited_on_mac('Book.epub', b'v1', b'v2')
+        with patch.object(app, 'mac_library', return_value=self.destination):
+            preview = app.sync_libraries(self.root)
+        self.assertEqual((preview['conflicts'], preview['conflictPaths'], preview['versionDifferenceCount']), (0, [], 0))
+        self.assertEqual(preview['macNewerPaths'], ['Book.epub'])
+
+    def test_undone_kindle_update_is_offered_instead_of_reapplied(self):
+        self.destination.mkdir()
+        book = self.edited_on_mac('Book.epub', b'v1', b'v2')
+        with patch.object(app, 'mac_library', return_value=self.destination), \
+                patch.object(app, 'kindle_library', return_value=self.root):
+            preview = app.sync_libraries(self.root)
+            app.sync_libraries(self.root, 'copy', preview['review'])
+            run = app.sync_history()[0]
+            replaced = next(action for action in run['actions'] if action['kind'] == 'replaced')
+            app.undo_sync_action(run['id'], replaced['id'])
+            self.assertEqual(book.read_bytes(), b'v1')
+            preview = app.sync_libraries(self.root)
+            self.assertEqual(preview['macNewerPaths'], [])
+            self.assertEqual(preview['epubConflictPaths'], ['Book.epub'])
+            app.sync_libraries(self.root, 'copy', preview['review'])
+            self.assertFalse(app.sync_needed(self.root, self.destination))
+        self.assertEqual(book.read_bytes(), b'v1')
+
+    def test_status_reports_edited_book_still_waiting_for_kindle_update(self):
+        self.destination.mkdir()
+        self.edited_on_mac('Book.epub', b'v1', b'v2')
+        # A sync that saved the Kindle version but failed before replacing it.
+        saved = app.sync_version_path('Book.epub', hashlib.sha256(b'v1').hexdigest(), create=True)
+        saved.write_bytes(b'v1')
+        with patch.object(app, 'mac_library', return_value=self.destination):
+            self.assertTrue(app.sync_needed(self.root, self.destination))
+            self.assertEqual(app.sync_libraries(self.root)['macNewerPaths'], ['Book.epub'])
+
+    def test_edited_book_matches_across_filename_case(self):
+        self.destination.mkdir()
+        self.edited_on_mac('shelf/book.epub', b'v1', b'v2', mac_relative='Shelf/Book.epub')
+        if not (self.destination / 'shelf/book.epub').exists():
+            self.skipTest('case-sensitive filesystem')
+        with patch.object(app, 'mac_library', return_value=self.destination):
+            self.assertEqual(app.sync_libraries(self.root)['macNewerPaths'], ['shelf/book.epub'])
+
+    def test_kindle_folder_with_only_macos_files_counts_as_empty(self):
+        self.destination.mkdir()
+        self.put('Removed/.DS_Store', b'finder')
+        self.put('Removed/._Gone.epub', b'attributes')
+        with open(self.base / 'moves.jsonl', 'a') as journal:
+            journal.write(json.dumps({'operation': 'remove-folder', 'library': str(self.destination),
+                                      'source': 'Removed', 'entries': [], 'status': 'completed'}) + '\n')
+        os.chmod(self.base / 'moves.jsonl', 0o600)
+        with patch.object(app, 'mac_library', return_value=self.destination):
+            preview = app.sync_libraries(self.root)
+            self.assertEqual(preview['removeEmptyFolders'], ['Removed'])
+            result = app.sync_libraries(self.root, 'copy', preview['review'])
+        self.assertEqual(result['kindle']['removedEmptyFolders'], 1)
+        self.assertFalse((self.root / 'Removed').exists())
+        self.assertFalse((self.destination / 'Removed').exists())
+
     def test_copies_saved_in_library_by_earlier_releases_still_count(self):
         self.destination.mkdir()
         book = self.put('Book.epub', b'Kindle version')

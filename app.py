@@ -1293,10 +1293,29 @@ def mac_edit_history(mac):
                 if (event.get('operation') == 'edit-metadata' and event.get('status') == 'completed'
                         and event.get('library') in libraries and isinstance(event.get('source'), str)
                         and isinstance(event.get('sha256'), str)):
-                    versions.setdefault(event['source'], set()).add(event['sha256'])
+                    # Mac and Kindle volumes are case-insensitive, so match paths that way.
+                    versions.setdefault(event['source'].casefold(), set()).add(event['sha256'])
     except FileNotFoundError:
         pass
     return versions
+
+
+def reverted_kindle_updates():
+    """Kindle replacements the user undid, as (casefolded path, Kindle digest) pairs.
+
+    Sync must not reapply these on its own after the user chose the Kindle version.
+    """
+    return {(action['path'].casefold(), action['previous'])
+            for run in sync_history() for action in run['actions']
+            if action.get('kind') == 'replaced' and action.get('undone')
+            and isinstance(action.get('path'), str) and isinstance(action.get('previous'), str)}
+
+
+def stale_after_mac_edit(relative, kindle_digest, edits, reverted):
+    """Whether this Kindle EPUB is a version from before an edit made in KoShelf."""
+    key = relative.casefold()
+    return (relative.lower().endswith('.epub') and kindle_digest in edits.get(key, ())
+            and (key, kindle_digest) not in reverted)
 
 
 def backup_version(path, digest):
@@ -1532,6 +1551,8 @@ def sync_needed(root, target):
         raise ValueError('The Mac library must not be a symbolic link.')
     device = root.stat().st_dev
     archived = archived_paths(target, root)
+    edits = mac_edit_history(target)
+    reverted = reverted_kindle_updates() if edits else set()
 
     def onerror(exc):
         raise exc
@@ -1580,7 +1601,10 @@ def sync_needed(root, target):
             digest = sync_digest(source, info)
             if saved.st_size == info.st_size and sync_digest(destination, saved) == digest:
                 continue
-            if saved_sync_version(relative, digest, destination) is None:
+            # A saved Kindle version settles a conflict, but not a book that is
+            # still waiting for the edited Mac version.
+            if (saved_sync_version(relative, digest, destination) is None
+                    or stale_after_mac_edit(relative, digest, edits, reverted)):
                 return True
     return False
 
@@ -2062,7 +2086,7 @@ def empty_folder_removal_plan(mac, kindle):
             if os.path.lexists(source) or destination.is_symlink() or not destination.is_dir():
                 continue
             info = destination.stat()
-            if info.st_dev == kindle.stat().st_dev and not any(destination.iterdir()):
+            if info.st_dev == kindle.stat().st_dev and not any(not system_junk(child.name) for child in destination.iterdir()):
                 plan[relative] = (info.st_dev, info.st_ino, info.st_mtime_ns)
         except (FileNotFoundError, ValueError):
             continue
@@ -2092,7 +2116,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
         try:
             out_info = out.lstat()
         except FileNotFoundError:
-            if relative_folder.parts and not dirs and not files:
+            if relative_folder.parts and not dirs and not any(not system_junk(name) for name in files):
                 incoming_folders.append(relative_folder.as_posix())
         else:
             if not statmod.S_ISDIR(out_info.st_mode) or out_info.st_dev != mac_device:
@@ -2138,14 +2162,17 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     status_plan = status_sync_plan(mac, kindle, send)
     remove_folders = empty_folder_removal_plan(mac, kindle)
     incoming_folders = [path for path in incoming_folders if path not in remove_folders]
-    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders]).encode()).hexdigest()
     # A Kindle copy that matches an earlier Mac version predates an edit made
-    # in KoShelf, so the Mac version is simply newer: update the Kindle.
+    # in KoShelf, so the Mac version is simply newer: update the Kindle. An
+    # undone update is a choice to keep the Kindle version, so offer it instead.
     edits = mac_edit_history(mac)
+    reverted = reverted_kindle_updates() if edits else set()
     mac_newer = sorted(path for path, (kindle_digest, _) in epub_conflicts.items()
-                       if kindle_digest in edits.get(path, ()))
+                       if stale_after_mac_edit(path, kindle_digest, edits, reverted))
     choosable = [path for path in epub_conflicts if path not in mac_newer]
+    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders, mac_newer]).encode()).hexdigest()
     if choice is None:
+        conflicts = [path for path in conflicts if path not in mac_newer]
         review_conflicts = sorted((set(conflicts) | epub_conflicts.keys()) - set(mac_newer))
         return {**backup, 'review': token, 'readingStatuses': list(status_plan.values()), 'removeEmptyFolders': list(remove_folders), 'incomingEmptyFolders': incoming_folders, 'toKindle': len(send), 'toKindlePaths': list(send)[:100],
                 'archiveOnKindle': [{'remove': path, 'keep': decision[0]}
@@ -2194,6 +2221,12 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                     or (info.st_dev, info.st_ino, info.st_mtime_ns) != tuple(signature)
                     or os.path.lexists(backup_alignment_path(mac, relative))):
                 raise ValueError('The folder changed during sync.')
+            # Only macOS metadata files may remain; remove them so the folder can go.
+            for child in path.iterdir():
+                child_info = child.lstat()
+                if not system_junk(child.name) or not statmod.S_ISREG(child_info.st_mode):
+                    raise ValueError('The folder is no longer empty.')
+                child.unlink()
             path.rmdir()
             sent['removedEmptyFolders'] += 1
             journal({'operation': 'sync-empty-folder-removal', 'library': str(mac),

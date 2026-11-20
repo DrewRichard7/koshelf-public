@@ -30,7 +30,7 @@ Tests that scan a library must point `app.JOURNAL` at a temporary folder. Otherw
 
 - **Bundled Python modules.** The app bundle includes only the modules listed in `scripts/build-macos.sh`. When you add a Python module, add it there. `scripts/check-service.py` fails if one is missing.
 - **Python version.** The minimum is 3.11. It is enforced in `app.py`, `launcher.py`, and `native/KoShelf.swift`, so change all three together, along with the README.
-- **Saved state.** The state folder holds `metadata-cache.json`, which is discarded whenever `app.py` changes, and `sync-digests.json`. Both are only caches and are safe to delete.
+- **Saved state.** The state folder holds `metadata-cache.json`, which is discarded whenever `app.py` changes, and `sync-digests.json`. Both are only caches and are safe to delete. `sync-versions/` holds recovery copies of Kindle files that differed during a sync. Undo depends on it, so it is not a cache.
 
 ## Boundaries to preserve
 
