@@ -87,7 +87,7 @@ def _book_suggestion(book, current, keys, replacements, mappings):
     unmapped = []
     seen = set()
     specific = {replacements[key] for key in keys}
-    for tag, key in zip(current, keys):
+    for index, (tag, key) in enumerate(zip(current, keys)):
         replacement = replacements[key]
         if replacement is None:
             unmapped.append(tag)
@@ -108,7 +108,7 @@ def _book_suggestion(book, current, keys, replacements, mappings):
                 proposed.append(replacement)
                 seen.add(replacement_key)
         if replacement != tag:
-            changes.append({"tag": tag, "replacement": replacement, "reason": reason})
+            changes.append({"index": index, "tag": tag, "replacement": replacement, "reason": reason})
     if changes:
         return {
             "path": book["path"], "title": book["title"], "author": book["author"],
@@ -142,7 +142,8 @@ def preview_genres(books, mappings=None):
         if suggestion:
             suggestions.append(suggestion)
     tags = [
-        {"tag": labels[key], "key": key, "count": counts[key], "replacement": replacements[key]}
+        {"tag": labels[key], "key": key, "count": counts[key], "replacement": replacements[key],
+         "known": _replacement(key, {}, {}) is not None}
         for key in sorted(counts, key=lambda key: (-counts[key], key))
     ]
     genres = sorted({**{tag_key(genre): genre for genre in GENRE_ALIASES},
@@ -151,20 +152,21 @@ def preview_genres(books, mappings=None):
 
 
 def choose_changes(current, changes, accepted):
-    """The genres that result from applying only the accepted tag changes.
+    """The genres that result from applying only the accepted changes.
 
-    Tags without an accepted change stay exactly as they are.
+    Changes are identified by their position in the current list, so a tag
+    that appears twice can be changed once. Tags without an accepted change
+    stay as they are, except that an exact duplicate is never written twice.
     """
-    replacements = {change["tag"]: change["replacement"] for change in changes}
+    replacements = {change["index"]: change["replacement"] for change in changes}
     accepted = set(accepted)
     if not accepted <= replacements.keys():
         raise ValueError("Choose changes from the current preview")
     result = []
-    for tag in current:
-        if tag not in accepted:
-            result.append(tag)
-            continue
-        replacement = replacements[tag]
-        if replacement and tag_key(replacement) not in {tag_key(genre) for genre in result}:
-            result.append(replacement)
+    seen = set()
+    for index, tag in enumerate(current):
+        value = replacements[index] if index in accepted else tag
+        if value and tag_key(value) not in seen:
+            result.append(value)
+            seen.add(tag_key(value))
     return result

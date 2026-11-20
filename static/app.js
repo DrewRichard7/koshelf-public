@@ -867,7 +867,7 @@ async function loadSyncHistory(expandedRun) {
       for (const message of run.errors || []) card.append(el('p', message));
       for (const action of run.actions) {
         const row = el('div', null, 'shelf-report-row');
-        const labels = {copied:'Copied', replaced:'Replaced', archived:'Archived', moved:'Moved', 'saved version':'Saved older version', 'kept version':'Kept the Kindle version in KoShelf’s recovery folder'};
+        const labels = {copied:'Copied', replaced:'Replaced', archived:'Archived', moved:'Moved', reading:'Updated reading progress', 'saved version':'Saved older version', 'kept version':'Kept the Kindle version in KoShelf’s recovery folder'};
         const name = action.origin ? `${action.origin} → ${action.path}` : action.path;
         const description = el('div');
         description.append(el('strong', name), el('small', `${action.side} · ${labels[action.kind]}${action.undone ? ' · Undone' : ''}`));
@@ -1375,8 +1375,8 @@ function renderCleanupTags() {
     const badge = el('span', null, 'cleanup-tag-badge');
     label.append(badge);
     const paintBadge = () => {
-      const saved = session.preview.mappings[key];
-      const unsaved = session.modes.has(key) && session.draft[key] !== saved;
+      const saved = session.preview.savedMappings[key];
+      const unsaved = (session.modes.has(key) || Object.hasOwn(session.preview.mappings, key)) && session.draft[key] !== saved;
       badge.classList.toggle('unsaved', unsaved);
       badge.textContent = unsaved ? 'Unsaved change' : saved === undefined ? '' :
         saved === '' ? 'Saved · removed' : saved === tag ? 'Saved · recognized' : `Saved · ${saved}`;
@@ -1410,7 +1410,7 @@ function renderCleanupTags() {
 }
 
 function savedMappingNotice(before, preview) {
-  const after = preview.mappings;
+  const after = preview.savedMappings;
   const labels = new Map(preview.tags.map(tag => [tag.key, tag.tag]));
   const describe = key => {
     const tag = labels.get(key) || key;
@@ -1444,7 +1444,8 @@ function showSavedNotice(notice) {
 function renderUnrecognizedTags() {
   const session = cleanupSession;
   const {preview} = session;
-  const tags = preview.tags.filter(tag => tag.replacement === null && !Object.hasOwn(preview.mappings, tag.key));
+  // Unrecognized means KoShelf doesn't know the tag and no mapping for it is saved.
+  const tags = preview.tags.filter(tag => !tag.known && !Object.hasOwn(preview.savedMappings, tag.key));
   const section = $('cleanup-unrecognized');
   section.hidden = !tags.length;
   if (!tags.length) return;
@@ -1482,7 +1483,13 @@ function renderUnrecognizedTags() {
       renderCleanupTags();
       $('cleanup-tags').querySelector('select')?.focus();
     };
-    row.append(name, recognize, more);
+    if (Object.hasOwn(preview.mappings, key)) {
+      // Previewed from an unsaved edit: it counts only once the mappings are saved.
+      const pending = el('span', 'Unsaved · save tag mappings to keep', 'cleanup-tag-badge unsaved');
+      row.append(name, pending, more);
+    } else {
+      row.append(name, recognize, more);
+    }
     return row;
   }));
 }
@@ -1505,14 +1512,18 @@ function updateCleanupApply() {
 
 // Mirrors genre_cleanup.choose_changes; the service recomputes the result when applying.
 function chosenGenres(book, accepted) {
-  const replacements = new Map(book.changes.map(change => [change.tag, change.replacement]));
-  const key = tag => tag.normalize('NFC').split(/\s+/).filter(Boolean).join(' ').toLocaleLowerCase();
+  const replacements = new Map(book.changes.map(change => [change.index, change.replacement]));
+  // Upper- then lower-casing approximates Python's casefold (ß → ss, ς → σ).
+  const key = tag => tag.split(/\s+/).filter(Boolean).join(' ').toUpperCase().toLowerCase().normalize('NFC');
   const result = [];
-  for (const tag of book.current) {
-    if (!accepted.has(tag)) { result.push(tag); continue; }
-    const replacement = replacements.get(tag);
-    if (replacement && !result.some(genre => key(genre) === key(replacement))) result.push(replacement);
-  }
+  const seen = new Set();
+  book.current.forEach((tag, index) => {
+    const value = accepted.has(index) ? replacements.get(index) : tag;
+    if (value && !seen.has(key(value))) {
+      result.push(value);
+      seen.add(key(value));
+    }
+  });
   return result;
 }
 
@@ -1548,7 +1559,7 @@ function renderCleanupPreview() {
   if (preview.skipped) summary.push(`${preview.skipped} unreadable`);
   $('cleanup-status').textContent = summary.join(' · ');
   $('cleanup-rules').hidden = false;
-  const savedCount = Object.keys(preview.mappings).length;
+  const savedCount = Object.keys(preview.savedMappings).length;
   $('cleanup-rules-heading').textContent = `Tag mappings · ${preview.tags.length} tags` + (savedCount ? ` · ${savedCount} saved` : '');
   renderUnrecognizedTags();
   $('cleanup-genres').replaceChildren(...preview.genres.map(genre => {
@@ -1581,7 +1592,7 @@ function renderCleanupPreview() {
         'Title · the suffix repeats the embedded series and book number.', refresh));
     }
     for (const change of book.changes) {
-      changes.append(cleanupChoice(book, 'tag', change.tag, change.tag, change.replacement, change.reason, refresh));
+      changes.append(cleanupChoice(book, 'tag', change.index, change.tag, change.replacement, change.reason, refresh));
     }
     body.append(changes);
     if (book.changes.length) {
@@ -1625,7 +1636,7 @@ async function scanGenres(saveMappings = false) {
     if (scope === 'selection') request.paths = session.paths;
     if (session.dirty || saveMappings) request.mappings = session.draft;
     if (saveMappings) request.saveMappings = true;
-    const before = session.preview?.mappings || {};
+    const before = session.preview?.savedMappings || {};
     const preview = await mutation('/api/genre-cleanup-preview', request, {updateStorage: false, root: session.root});
     if (cleanupSession !== session || !cleanupDialog.open) return;
     if (saveMappings) session.savedNotice = savedMappingNotice(before, preview);
@@ -1722,6 +1733,7 @@ $('cleanup-apply').onclick = async () => {
   updateCleanupApply();
   $('cleanup-books').inert = true;
   $('cleanup-rules').inert = true;
+  $('cleanup-unrecognized').inert = true;
   $('cleanup-scope').disabled = true;
   $('cleanup-close').disabled = true;
   setBusy(true);
@@ -1733,7 +1745,7 @@ $('cleanup-apply').onclick = async () => {
       const choice = session.approved.get(book.path);
       const request = {path: book.path, revision: book.revision, mappings: session.preview.mappings};
       if (choice.title) request.title = book.proposedTitle;
-      if (choice.tags.size) request.acceptedTags = [...choice.tags];
+      if (choice.tags.size) request.acceptedChanges = [...choice.tags];
       try {
         const data = await mutation('/api/metadata-cleanup-apply', request, {updateStorage: false, root: session.root});
         const shown = library.books.find(entry => entry.path === book.path);
@@ -2845,7 +2857,7 @@ function progressRow(place, role, from, to) {
   return row;
 }
 
-function readingProgressChange({book, winner, kindle, mac}) {
+function readingProgressChange({book, winner, kindle, mac, note}) {
   const [source, receiver, sent, had] = winner === 'kindle' ? ['Kindle', 'Mac', kindle, mac] : ['Mac', 'Kindle', mac, kindle];
   const card = el('article', null, 'sync-progress');
   card.setAttribute('aria-label', sent === had
@@ -2856,7 +2868,13 @@ function readingProgressChange({book, winner, kindle, mac}) {
   const arrow = el('span', '↓', 'sync-progress-arrow');
   arrow.setAttribute('aria-hidden', 'true');
   card.append(heading, progressRow(source, 'source', sent, sent), arrow, progressRow(receiver, 'receiver', had, sent));
-  if (sent === had) card.append(el('p', 'Same progress. Notes or settings differ, so the Kindle copy is used.', 'hint'));
+  if (note === 'finished') {
+    card.append(el('p', 'Only the finished status goes to the Kindle. Its reading position, highlights, and notes stay.', 'hint'));
+  } else if (note === 'mac-ahead') {
+    card.append(el('p', 'The Mac copy shows more progress, but KoShelf can only carry a finished status to the Kindle. The Kindle’s reading position, highlights, and notes are kept.', 'hint'));
+  } else if (sent === had) {
+    card.append(el('p', 'Same progress. Notes or settings differ, so the Kindle copy is used.', 'hint'));
+  }
   return card;
 }
 
@@ -2868,13 +2886,13 @@ function syncMoveChoice(group) {
   card.setAttribute('role', 'radiogroup');
   card.setAttribute('aria-labelledby', heading.id);
   if (!group.single) {
-    card.append(el('p', `Several copies exist (Kindle: ${group.kindle.join(' · ')} / Mac: ${group.mac.join(' · ')}). KoShelf leaves them in place.`));
+    card.append(el('p', `Several copies exist (Kindle: ${group.kindle.join(' · ')} / Mac: ${group.mac.join(' · ')}). They sync as separate files.`));
     return card;
   }
   const options = [
     ['backup', 'Use the Mac name', `Renames the Kindle copy to ${group.mac[0]}`],
     ['kindle', 'Use the Kindle name', `Renames the Mac copy to ${group.kindle[0]}`],
-    ['both', 'Keep both', 'These files are identical. To keep both, change the title or author of the Mac copy in KoShelf, then sync again.'],
+    ['both', 'Keep both for now', 'Leaves both names as they are this time. The files are identical, so sync asks again until you change the title or author of the Mac copy in KoShelf.'],
   ];
   for (const [value, title, detail] of options) {
     const label = el('label', null, 'sync-move-option');
@@ -2895,18 +2913,15 @@ function syncMoveChoice(group) {
 function chosenMoves() {
   const moves = {};
   for (const input of $('sync-move-choices').querySelectorAll('input:checked')) {
-    if (input.value !== 'both') moves[input.dataset.group] = input.value;
+    moves[input.dataset.group] = input.value;
   }
   return moves;
 }
 
 function updateMoveChoices() {
-  // Every matching book needs a name, and keeping both needs an edit first.
+  // Every matching book needs a choice before syncing.
   const cards = [...$('sync-move-choices').querySelectorAll('.sync-version')].filter(card => card.querySelector('input'));
-  const ready = cards.every(card => {
-    const chosen = card.querySelector('input:checked');
-    return chosen && chosen.value !== 'both';
-  });
+  const ready = cards.every(card => card.querySelector('input:checked'));
   $('apply-sync').disabled = !ready;
   $('apply-sync').title = ready ? '' : 'Choose a name for each matching book first.';
 }
