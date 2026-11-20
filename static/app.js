@@ -162,6 +162,7 @@ function renderConnection() {
   $('open-icloud-sync').disabled = busy || loading || !library.connected || !onMac;
   $('open-library-health').disabled = busy || loading || !library.connected;
   $('open-genre-cleanup').disabled = busy || loading || !library.connected || !onMac;
+  $('open-apple-books').disabled = busy || loading || !library.connected || !onMac;
   $('open-sync-leftovers').disabled = busy || loading || !library.connected || !onMac;
   $('find-duplicates').disabled=busy||loading||!library.connected||!library.books.length;
   renderSelection();
@@ -640,7 +641,8 @@ const cardCache = new Map();
 
 function cardKey(book) {
   return [library.root, selectionMode, book.title, book.author, book.folder, book.series, book.seriesPosition,
-    book.readingStatus, book.readingProgress, book.readingStatusPending, book.modified, book.hasCover].join('\u0000');
+    book.readingStatus, book.readingProgress, book.readingStatusPending, book.booksProgress, book.modified,
+    book.hasCover].join('\u0000');
 }
 
 function releaseCard(entry) {
@@ -662,6 +664,7 @@ function bookCard(book) {
   card.append(art, el('h3', book.title), el('div', book.author, 'author'), el('div', book.folder || 'EPUB', 'book-path'));
   if (book.series) card.append(el('div', seriesLabel(book), 'book-series'));
   if (book.readingStatus) card.append(readingProgress(book));
+  if (book.booksProgress != null) card.append(el('div', `Apple Books · ${percentLabel(book.booksProgress)}`, 'books-progress'));
   if (selectionMode) {
     const check = el('span', null, 'book-check');
     check.setAttribute('aria-hidden', 'true');
@@ -1773,6 +1776,132 @@ $('cleanup-apply').onclick = async () => {
   }
 };
 
+const appleBooksDialog = $('apple-books-dialog');
+let appleBooksSession = null;
+
+function appleBooksRow(row, ambiguous) {
+  const label = el('label', null, 'cleanup-change');
+  const input = el('input');
+  input.type = 'checkbox';
+  input.value = row.path;
+  input.onchange = updateAppleBooksAdd;
+  const text = el('span', null, 'cleanup-change-text');
+  text.append(el('span', row.title, 'cleanup-after'), el('span', row.author, 'cleanup-before'));
+  if (ambiguous) {
+    for (const match of row.books) {
+      text.append(el('small', `Apple Books has: ${match.title} · ${match.author || 'Unknown author'}${match.store ? ' (Book Store)' : ''}`));
+    }
+  }
+  text.append(el('small', row.path));
+  label.append(input, text);
+  return label;
+}
+
+function appleBooksChoices() {
+  return [...appleBooksDialog.querySelectorAll('#apple-books-missing-list input:checked, #apple-books-ambiguous-list input:checked')]
+    .map(input => input.value);
+}
+
+function updateAppleBooksAdd() {
+  const count = appleBooksChoices().length;
+  const button = $('apple-books-add');
+  button.disabled = !count || !appleBooksSession || appleBooksSession.pending;
+  button.textContent = count ? `Add ${count} ${count === 1 ? 'book' : 'books'} to Apple Books` : 'Add to Apple Books';
+  const boxes = [...$('apple-books-missing-list').querySelectorAll('input')];
+  $('apple-books-select-all').textContent = boxes.length && boxes.every(box => box.checked) ? 'Clear all' : 'Select all';
+}
+
+async function reviewAppleBooks(note = '') {
+  const session = appleBooksSession;
+  session.pending = true;
+  updateAppleBooksAdd();
+  $('apple-books-status').textContent = 'Reading Apple Books’ library…';
+  for (const id of ['apple-books-access', 'apple-books-missing', 'apple-books-ambiguous']) $(id).hidden = true;
+  $('apple-books-missing-list').replaceChildren();
+  $('apple-books-ambiguous-list').replaceChildren();
+  try {
+    const preview = await mutation('/api/apple-books-preview', {}, {updateStorage: false, root: session.root});
+    if (appleBooksSession !== session || !appleBooksDialog.open) return;
+    session.preview = preview;
+    if (preview.state === 'needs-access') {
+      $('apple-books-access').hidden = false;
+      $('apple-books-status').textContent = '';
+      return;
+    }
+    if (preview.state !== 'ok') {
+      $('apple-books-status').textContent = 'Apple Books isn’t available on this computer.';
+      return;
+    }
+    const missing = preview.missing.length;
+    $('apple-books-status').textContent = [note, `${preview.present} already in Apple Books`,
+      preview.waiting && `${preview.waiting} added and waiting for Apple Books to list them`,
+      `${missing} not in Apple Books`].filter(Boolean).join(' · ');
+    $('apple-books-missing').hidden = !missing;
+    $('apple-books-missing-heading').textContent = `Not in Apple Books (${missing})`;
+    $('apple-books-missing-list').replaceChildren(...preview.missing.map(row => appleBooksRow(row, false)));
+    $('apple-books-ambiguous').hidden = !preview.ambiguous.length;
+    $('apple-books-ambiguous-heading').textContent = `Same title, different author (${preview.ambiguous.length})`;
+    $('apple-books-ambiguous-list').replaceChildren(...preview.ambiguous.map(row => appleBooksRow(row, true)));
+  } catch (error) {
+    if (appleBooksSession === session) $('apple-books-status').textContent = error.message;
+  } finally {
+    if (appleBooksSession === session) {
+      session.pending = false;
+      updateAppleBooksAdd();
+    }
+  }
+}
+
+$('open-apple-books').onclick = () => {
+  if (busy || loading || !library.connected || library.root !== library.macRoot) return;
+  $('shelf-actions').open = false;
+  appleBooksSession = {root: library.root, pending: false, preview: null};
+  $('apple-books-errors').hidden = true;
+  appleBooksDialog.showModal();
+  reviewAppleBooks();
+};
+$('apple-books-retry').onclick = () => reviewAppleBooks();
+$('apple-books-settings').onclick = () => mutation('/api/full-disk-access', {}, {updateStorage: false}).catch(error => {
+  $('apple-books-status').textContent = error.message;
+});
+$('apple-books-select-all').onclick = () => {
+  const boxes = [...$('apple-books-missing-list').querySelectorAll('input')];
+  const select = boxes.some(box => !box.checked);
+  for (const box of boxes) box.checked = select;
+  updateAppleBooksAdd();
+};
+$('apple-books-add').onclick = async () => {
+  const session = appleBooksSession;
+  const paths = appleBooksChoices();
+  if (!paths.length || session.pending) return;
+  session.pending = true;
+  updateAppleBooksAdd();
+  setBusy(true);
+  $('apple-books-close').disabled = true;
+  $('apple-books-status').textContent = `Adding ${paths.length} ${paths.length === 1 ? 'book' : 'books'}…`;
+  const errors = $('apple-books-errors');
+  try {
+    const result = await mutation('/api/apple-books-add', {paths, review: session.preview.review}, {updateStorage: false, root: session.root});
+    errors.replaceChildren(...result.errors.map(error => el('li', error)));
+    errors.hidden = !result.errors.length;
+    $('apple-books-status').textContent = `Added ${result.added} · Apple Books usually lists new books within a minute…`;
+    // Give Books time to import, then check what it lists now.
+    await new Promise(resolve => setTimeout(resolve, 8000));
+    if (appleBooksSession === session && appleBooksDialog.open) {
+      session.pending = false;
+      await reviewAppleBooks(`Added ${result.added}${result.failed ? ` · ${result.failed} failed` : ''}`);
+    }
+  } catch (error) {
+    $('apple-books-status').textContent = error.message;
+  } finally {
+    session.pending = false;
+    $('apple-books-close').disabled = false;
+    setBusy(false);
+    updateAppleBooksAdd();
+  }
+};
+appleBooksDialog.addEventListener('cancel', event => { if ($('apple-books-close').disabled) event.preventDefault(); });
+
 const splitDialog = $('split-dialog');
 let splitSession;
 
@@ -1957,6 +2086,7 @@ function details(b) {
     $('detail-content').append(readingStatusEditor(b));
   } else if (b.readingStatus) {
     $('detail-content').append(readingProgress(b));
+    if (b.booksProgress != null) $('detail-content').append(el('p', `Apple Books · ${percentLabel(b.booksProgress)}`, 'books-progress'));
   }
   $('detail-content').append(dl);
   if(b.description)$('detail-content').append(el('p',b.description,'description'));
@@ -2783,6 +2913,7 @@ function reviewSync(preview) {
   $('sync-folder-count').textContent = `Same book, different name or folder (${moveGroups.length})`;
   $('sync-move-choices').replaceChildren(...moveGroups.map(syncMoveChoice));
   const progress = preview.readingProgress || [];
+  $('sync-books-note').hidden = preview.appleBooks !== 'needs-access';
   $('sync-reading-progress').hidden = !progress.length;
   $('sync-reading-progress').open = true;
   $('sync-reading-progress-count').textContent = `Reading progress (${progress.length})`;
@@ -2857,8 +2988,9 @@ function progressRow(place, role, from, to) {
   return row;
 }
 
-function readingProgressChange({book, winner, kindle, mac, note}) {
-  const [source, receiver, sent, had] = winner === 'kindle' ? ['Kindle', 'Mac', kindle, mac] : ['Mac', 'Kindle', mac, kindle];
+function readingProgressChange({book, winner, kindle, mac, books, note}) {
+  const [source, receiver, sent, had] = winner === 'books' ? ['Apple Books', 'Kindle', books, kindle]
+    : winner === 'kindle' ? ['Kindle', 'Mac', kindle, mac] : ['Mac', 'Kindle', mac, kindle];
   const card = el('article', null, 'sync-progress');
   card.setAttribute('aria-label', sent === had
     ? `${book}: both at ${percentLabel(sent)}. The ${receiver} copy gets the ${source} reading file.`
@@ -2868,7 +3000,13 @@ function readingProgressChange({book, winner, kindle, mac, note}) {
   const arrow = el('span', '↓', 'sync-progress-arrow');
   arrow.setAttribute('aria-hidden', 'true');
   card.append(heading, progressRow(source, 'source', sent, sent), arrow, progressRow(receiver, 'receiver', had, sent));
-  if (note === 'finished') {
+  if (note === 'books') {
+    card.append(el('p', 'Approximate: the Kindle opens at Apple Books’ percentage, which may be a page or two off. Its highlights and notes stay, and the Mac copy is updated to match.', 'hint'));
+  } else if (note === 'books-new') {
+    card.append(el('p', 'Approximate: the Kindle opens at Apple Books’ percentage, which may be a page or two off. The Mac gets this reading file at the next sync.', 'hint'));
+  } else if (note === 'books-finished') {
+    card.append(el('p', 'Finished in Apple Books. Only the finished status goes to the Kindle. Its reading position, highlights, and notes stay.', 'hint'));
+  } else if (note === 'finished') {
     card.append(el('p', 'Only the finished status goes to the Kindle. Its reading position, highlights, and notes stay.', 'hint'));
   } else if (note === 'mac-ahead') {
     card.append(el('p', 'The Mac copy shows more progress, but KoShelf can only carry a finished status to the Kindle. The Kindle’s reading position, highlights, and notes are kept.', 'hint'));

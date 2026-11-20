@@ -22,7 +22,9 @@ python = bundled_python if bundled_python.is_file() else sys.executable
 with tempfile.TemporaryDirectory() as temporary:
     root=Path(temporary)/'books';root.mkdir()
     home=Path(temporary)/'home';home.mkdir()
-    env={**os.environ,'HOME':str(home),'KOSHELF_STATE_DIR':str(root),'PYTHONDONTWRITEBYTECODE':'1'}
+    # KoShelf's data folder holds service.lock, so keep it apart from the library under test.
+    state=Path(temporary)/'state'
+    env={**os.environ,'HOME':str(home),'KOSHELF_STATE_DIR':str(state),'PYTHONDONTWRITEBYTECODE':'1'}
     app=resources/'app.py'
     process=subprocess.Popen([str(python),'-E','-S','-B',str(app),'--library',str(root),'--port','0','--session-pipe'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=env)
     try:
@@ -83,7 +85,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert post('/api/library', {'path': mac})['root'] == mac
         preview = post('/api/genre-cleanup-preview', {'library': mac, 'scope': 'library'})
         assert preview['scanned'] == 0 and 'Science Fiction' in preview['genres'], preview
-        assert not (root/'genre-mappings.json').exists()
+        assert not (state/'genre-mappings.json').exists()
         cloud = (home/'Library'/'Mobile Documents'/'com~apple~CloudDocs'/'KoShelf Library').resolve()
         cloud.mkdir(parents=True)
         (cloud/'Phone.epub').write_bytes(b'cloud sync fixture')

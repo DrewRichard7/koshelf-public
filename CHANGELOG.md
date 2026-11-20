@@ -4,6 +4,9 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **Builds keep Full Disk Access across updates.** The build signs KoShelf with a stable `KoShelf Signing` certificate when the keychain has one, so macOS keeps the permission that Apple Books features need. Without the certificate, builds are signed ad hoc as before.
+- **Apple Books progress.** With Full Disk Access, KoShelf reads Apple Books' library without changing it. Book cards show Apple Books progress. **Sync libraries** moves the Kindle to Apple Books' position when Apple Books is further along, and marks books finished there as finished on the Kindle. The review shows these changes as Apple Books → Kindle cards, and sync history can undo them. Highlights and notes on the Kindle stay.
+- **Add to Apple Books.** A review lists Mac library books that aren't in Apple Books, and flags books whose title matches a different author's. Books you choose are copied into Apple Books' iCloud Drive folder, and Books adds them on all your devices.
 - **The browser version shares the app's data.** On macOS both use `~/Library/Application Support/KoShelf`, and on Linux `~/.local/state/koshelf`. Tag mappings, sync history and undo, recovery copies, and the record of books edited on the Mac now carry over between them. Only one can be open at a time, and a second one explains why it can't start. If the app crashes or is force-quit, its service now stops too, so the app reopens normally. Earlier releases kept browser data in `state/` in the checkout.
 - **Opening the browser works with Snap browsers on Linux.** The launcher opens a single-use link that expires after a minute, instead of a file in `/tmp` that Snap's Firefox and Chromium can't read. Only a browser running under your account can use the link.
 - **Send to Kindle on Linux warns that the converter isn't sandboxed yet.** Linux sandboxing is on the roadmap.

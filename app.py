@@ -12,6 +12,7 @@ import unicodedata
 import re
 import ctypes
 import errno
+import sqlite3
 import fcntl
 import time
 import uuid
@@ -40,6 +41,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from genre_cleanup import choose_changes, preview_genres, validate_mappings
 import cloud_sync
 import digest_index
+import apple_books
 import epub_split
 import kindle_fonts
 import kindle_delivery
@@ -525,6 +527,12 @@ def write_reading_status(book, status):
         if not end or re.search(rb'^    \["summary"\]', data, re.M):
             raise ValueError('Unsupported KOReader settings format.')
         updated = data[:end.start()] + newline.join((b'    ["summary"] = {', line, b'    },', b'')) + data[end.start():]
+    replace_reading_settings(settings, old, updated)
+
+
+def replace_reading_settings(settings, old, updated):
+    """Write KOReader settings atomically, only if they still hold `old` (None: absent)."""
+    sidecar = settings.parent
     sidecar.mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=sidecar, prefix='.koshelf-edit-', delete=False) as output:
         temporary = Path(output.name)
@@ -540,6 +548,88 @@ def write_reading_status(book, status):
                 os.replace(temporary, settings)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def write_reading_position(settings, fraction):
+    """Point KOReader at a percentage of the book, keeping highlights, notes, and settings.
+
+    KOReader opens at last_percent only when last_xpointer is absent, so the exact
+    position is removed. KOReader saves a new exact position once the book opens.
+    The result is approximate: another app's percentage won't match KOReader's layout.
+    """
+    sidecar = settings.parent
+    if sidecar.is_symlink() or settings.is_symlink():
+        raise ValueError('KOReader settings must be in an adjacent folder without symbolic links.')
+    if settings.exists():
+        old = data = read_reading_settings(settings)
+    else:
+        if sidecar.is_dir() and any(sidecar.glob(settings.name + '.*')):
+            raise ValueError('KOReader has a backup settings file. Open the book in KOReader first.')
+        old = None
+        data = b'return {\n}\n'
+    if not 0 <= fraction <= 1:
+        raise ValueError('Invalid reading position.')
+    if not re.search(rb'^return \{\r?$', data, re.M):
+        raise ValueError('Unsupported KOReader settings format.')
+    newline = b'\r\n' if b'\r\n' in data else b'\n'
+    value = repr(round(float(fraction), 6)).encode('ascii')
+    # Only top-level keys sit at four spaces; nested ones are indented further.
+    data = re.sub(rb'^    \["(?:last_xpointer|last_epubcfi)"\] = [^\n]*\n', b'', data, flags=re.M)
+    for key in (b'last_percent', b'percent_finished'):
+        line = b'    ["' + key + b'"] = ' + value + b','
+        pattern = rb'^    \["' + key + rb'"\] = [^\r\n]*'
+        if re.search(pattern, data, re.M):
+            data = re.sub(pattern, lambda _: line, data, count=1, flags=re.M)
+        else:
+            end = re.search(rb'^}[ \t]*(?:\r?\n)?\Z', data, re.M)
+            if not end:
+                raise ValueError('Unsupported KOReader settings format.')
+            data = data[:end.start()] + line + newline + data[end.start():]
+    replace_reading_settings(settings, old, data)
+
+
+APPLE_BOOKS_ENABLED = False  # Turned on by main(), so tests never read the real Books library.
+APPLE_BOOKS = {'revision': None, 'matcher': None}
+
+
+def apple_books_opted_in():
+    return JOURNAL.with_name('apple-books-enabled').exists()
+
+
+def apple_books_matcher():
+    """Apple Books' library as (state, matcher). State is ok, off, needs-access, or unavailable.
+
+    KoShelf reads Apple Books only after the user has opened Add to Apple Books, so
+    people who don't use it never see a macOS privacy prompt for Books' data.
+    """
+    if not APPLE_BOOKS_ENABLED or not apple_books.available():
+        return 'unavailable', None
+    if not apple_books_opted_in():
+        return 'off', None
+    try:
+        revision = apple_books.database_revision()
+        if revision is None:
+            return 'unavailable', None
+        if APPLE_BOOKS['revision'] != revision:
+            scratch = private_state_subdirectory(JOURNAL.parent, 'apple-books')
+            APPLE_BOOKS.update(revision=revision, matcher=apple_books.Matcher(apple_books.read_library(scratch=scratch)))
+        return 'ok', APPLE_BOOKS['matcher']
+    except apple_books.AccessDenied:
+        return 'needs-access', None
+    except (OSError, ValueError, sqlite3.Error):
+        return 'unavailable', None
+
+
+def book_details(path):
+    """Cached title and author for an EPUB."""
+    info = path.stat()
+    key = (str(path), info.st_size, info.st_mtime_ns)
+    meta = CACHE.get(key)
+    if meta is None:
+        meta = metadata(path, load_cover=False)
+        CACHE[key] = meta
+        CACHE_STATE['dirty'] = True
+    return meta
 
 
 def reading_status_queue():
@@ -687,6 +777,7 @@ def scan():
     books, folders, seen = [], [], set()
     load_metadata_cache()
     status_edits = reading_status_queue() if ROOT == mac_library().resolve() else {}
+    books_matcher = apple_books_matcher()[1]
     device = ROOT_ID[0]
     for base, dirs, files in os.walk(ROOT, followlinks=False):
         base = Path(base)
@@ -708,6 +799,10 @@ def scan():
                     CACHE[key] = meta
                     CACHE_STATE['dirty'] = True
                 reading = koreader_reading(p)
+                if books_matcher is not None:
+                    progress = books_matcher.progress(meta['title'], meta.get('author'))
+                    if progress is not None:
+                        reading['booksProgress'] = progress['progress']
                 if rel in status_edits and sync_digest(p, stat) == status_edits[rel]['digest']:
                     reading.update(readingStatus=status_edits[rel]['status'], readingStatusPending=True)
                 books.append({**{k: v for k, v in meta.items() if k not in ('cover', 'description')}, **reading, 'hasDescription': bool(meta.get('description')), 'hasCover': meta.get('hasCover', meta['cover'] is not None), 'path': rel, 'folder': '' if p.parent == ROOT else p.parent.relative_to(ROOT).as_posix(), 'filename': filename, 'size': stat.st_size, 'modified': stat.st_mtime})
@@ -868,6 +963,100 @@ def genre_cleanup_preview(body, *, fresh=False):
                 pending.unlink(missing_ok=True)
     return {**result, 'mappings': mappings, 'savedMappings': mappings if save else saved_mappings,
             'scope': scope, 'scanned': len(paths), 'skipped': skipped}
+
+
+def apple_books_additions(root):
+    """Books KoShelf copied into Apple Books' folder that are still there, by library path."""
+    added = {}
+    try:
+        with open_state_text(JOURNAL) as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (event.get('operation') == 'add-to-apple-books' and event.get('library') == str(root)
+                        and isinstance(event.get('source'), str) and isinstance(event.get('destination'), str)):
+                    added[event['source']] = event['destination']
+    except FileNotFoundError:
+        pass
+    # Removing the book in Apple Books removes its file, so it can be offered again.
+    return {source for source, destination in added.items() if os.path.lexists(destination)}
+
+
+def apple_books_preview():
+    """Mac library books that are missing from Apple Books, or only match by title."""
+    root = cleanup_root()
+    private_state_directory(JOURNAL.parent, create=True)
+    JOURNAL.with_name('apple-books-enabled').touch()  # Opening this review turns on Apple Books features.
+    state, matcher = apple_books_matcher()
+    if matcher is None:
+        return {'state': state}
+    pending = apple_books_additions(root)
+    missing, ambiguous, present, waiting = [], [], 0, 0
+    for books in backup_book_index(root).values():
+        for book in books:
+            relative = book.relative_to(root).as_posix()
+            if (book.suffix.lower() != '.epub' or BACKUP_COPY.fullmatch(book.stem)
+                    or any(part.startswith('.') or part.lower().endswith('.sdr') for part in PurePosixPath(relative).parts)):
+                continue
+            try:
+                details = book_details(book)
+            except OSError:
+                continue
+            if details.get('warning'):
+                continue
+            same, title_only = matcher.match(details['title'], details.get('author'))
+            row = {'path': relative, 'title': details['title'], 'author': details.get('author') or ''}
+            if same:
+                present += 1
+            elif relative in pending:
+                waiting += 1  # Copied already; Apple Books hasn't listed it yet.
+            elif title_only:
+                ambiguous.append({**row, 'books': [{'title': entry['title'], 'author': entry['author'],
+                                                    'store': entry['store']} for entry in title_only[:3]]})
+            else:
+                missing.append(row)
+    order = lambda row: (row['title'].casefold(), row['path'])
+    missing.sort(key=order)
+    ambiguous.sort(key=order)
+    review = hashlib.sha256(json.dumps([str(root), [row['path'] for row in missing],
+                                        [row['path'] for row in ambiguous]]).encode()).hexdigest()
+    return {'state': state, 'present': present, 'waiting': waiting, 'missing': missing, 'ambiguous': ambiguous,
+            'review': review}
+
+
+def add_to_apple_books(body):
+    preview = apple_books_preview()
+    if preview['state'] != 'ok' or body.get('review') != preview['review']:
+        raise ValueError('The libraries changed. Review the books again.')
+    allowed = {row['path'] for row in preview['missing'] + preview['ambiguous']}
+    paths = body.get('paths')
+    if not isinstance(paths, list) or not paths or any(not isinstance(path, str) or path not in allowed for path in paths):
+        raise ValueError('Choose books from the current review.')
+    result = {'added': 0, 'failed': 0, 'errors': []}
+    for relative in dict.fromkeys(paths):
+        try:
+            source = library_path(relative)
+            if source.is_symlink() or not source.is_file():
+                raise ValueError('The EPUB is no longer in your library.')
+            destination = apple_books.add_to_books(source, rename_exclusive)
+            journal({'operation': 'add-to-apple-books', 'library': str(ROOT), 'source': relative,
+                     'destination': str(destination), 'status': 'completed'})
+            result['added'] += 1
+        except (OSError, ValueError) as exc:
+            result['failed'] += 1
+            if len(result['errors']) < 5:
+                result['errors'].append(f'{relative}: {exc}')
+    return result
+
+
+def open_full_disk_access_settings():
+    if os.sys.platform != 'darwin':
+        raise ValueError('Full Disk Access is a macOS setting.')
+    subprocess.run(['/usr/bin/open', 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'],
+                   check=False, timeout=10)
+    return {}
 
 
 def cleanup_revision(info):
@@ -2062,7 +2251,7 @@ class SyncHistory:
         self.write('reading', id=uuid.uuid4().hex, root=str(root),
                    side='Mac' if root == mac_library() else 'Kindle', identity=[info.st_dev, info.st_ino],
                    path=path.relative_to(root).as_posix(), digest=digest, previous=previous,
-                   backup=str(backup), origin=None)
+                   backup=str(backup) if backup else None, origin=None)
 
     def finish(self, *results):
         failed = sum(result['failed'] for result in results)
@@ -2158,6 +2347,10 @@ def undo_sync_action(run_id, action_id):
         else:
             preserve_sync_copy(path, digest, action_id)
             sync_restore_copy(backup, path, action['previous'], replace_digest=digest)
+    elif kind == 'reading' and action.get('previous') is None:
+        # Sync created this reading file; keep a recovery copy, then remove it.
+        preserve_sync_copy(path, digest, action_id)
+        path.unlink()
     elif kind == 'reading':
         backup = Path(action['backup'])
         if backup.is_symlink() or not backup.is_file() or file_digest(backup) != action['previous']:
@@ -2262,6 +2455,52 @@ def copy_reading_file(source, destination, digest, relative):
     return recovery, old_digest
 
 
+BOOKS_LEAD = 0.01  # Apple Books must be at least a percentage point ahead to move the Kindle.
+
+
+def books_progress_plan(mac, kindle, reading_plan):
+    """Add Kindle books that Apple Books is further along in to the reading plan.
+
+    Books is read, never written. A book finished in Books is marked finished on the
+    Kindle; otherwise the Kindle opens at Books' percentage. Returns Books' access state.
+    """
+    state, matcher = apple_books_matcher()
+    if matcher is None:
+        return state
+    for books in backup_book_index(kindle).values():
+        for book in books:
+            relative = book.relative_to(kindle).as_posix()
+            if (book.suffix.lower() != '.epub' or BACKUP_COPY.fullmatch(book.stem)
+                    or any(part.startswith('.') or part.lower().endswith('.sdr') for part in PurePosixPath(relative).parts)):
+                continue
+            try:
+                details = book_details(book)
+            except OSError:
+                continue
+            progress = matcher.progress(details['title'], details.get('author'))
+            if progress is None:
+                continue
+            path = str(PurePosixPath(relative).with_suffix('.sdr') / 'metadata.epub.lua')
+            settings, on_mac_path = kindle / path, mac / path
+            if not settings.is_file() and on_mac_path.exists():
+                continue  # Only the Mac has this book's reading file; sync copies it to the Kindle first.
+            on_kindle = reading_fraction(settings) if settings.is_file() else 0.0
+            on_mac = reading_fraction(on_mac_path) if on_mac_path.is_file() else None
+            if on_kindle is None or (on_mac_path.is_file() and on_mac is None):
+                continue
+            # Books must lead both copies, so a book finished on the Mac is never undone.
+            if progress['progress'] < max(on_kindle, on_mac or 0.0) + BOOKS_LEAD:
+                continue
+            existing = reading_plan.get(path)
+            digests = existing['digests'] if existing else [
+                sync_digest(settings, settings.stat()) if settings.is_file() else None,
+                sync_digest(on_mac_path, on_mac_path.stat()) if on_mac_path.is_file() else None]
+            note = 'books-finished' if progress['finished'] else 'books' if digests[1] else 'books-new'
+            reading_plan[path] = {'winner': 'books', 'kindle': on_kindle, 'books': progress['progress'],
+                                  'mac': on_mac, 'digests': digests, 'note': note}
+    return state
+
+
 def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
     mac = mac_library()
     identity = kindle.stat()
@@ -2360,6 +2599,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
             matched.update([path, str(PurePosixPath(path).with_suffix('.sdr')) + '/'])
     incoming = [path for path in incoming
                 if path not in matched and not any(path.startswith(prefix) for prefix in matched if prefix.endswith('/'))]
+    books_state = books_progress_plan(mac, kindle, reading_plan)
     status_plan = status_sync_plan(mac, kindle, send)
     remove_folders = empty_folder_removal_plan(mac, kindle)
     incoming_folders = [path for path in incoming_folders if path not in remove_folders]
@@ -2384,8 +2624,10 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
                 'epubComparisons': {path: compare_epub_versions(mac / path, kindle / path)
                                     for path in choosable},
                 'versionDifferenceCount': len(review_conflicts), 'versionDifferencePaths': review_conflicts[:100],
+                'appleBooks': books_state,
                 'readingProgress': [{'path': path, 'book': PurePosixPath(path).parent.stem, 'winner': plan['winner'],
-                                     'kindle': plan['kindle'], 'mac': plan['mac'], 'note': plan.get('note')}
+                                     'kindle': plan['kindle'], 'mac': plan['mac'], 'books': plan.get('books'),
+                                     'note': plan.get('note')}
                                     for path, plan in sorted(reading_plan.items()) if not plan.get('hidden')][:100],
                 'moveGroups': [{**group, 'title': matching_title(mac, group)} for group in backup.get('groups', [])]}
     if review != token:
@@ -2466,13 +2708,38 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
             current = kindle.stat()
             if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
                 raise ValueError('The Kindle changed during sync.')
-            on_kindle = backup_alignment_path(kindle, path)
-            on_mac = backup_alignment_path(mac, path)
             kindle_digest, mac_digest = plan['digests']
-            if (on_kindle.is_symlink() or on_mac.is_symlink()
-                    or file_digest(on_kindle) != kindle_digest or file_digest(on_mac) != mac_digest):
-                raise ValueError('The reading file changed during sync. Review sync again.')
-            if plan['winner'] == 'mac':
+            # A book never opened in KOReader has no .sdr folder yet. Apple Books
+            # progress creates it on the Kindle, as KOReader would; the next sync
+            # copies it to the Mac.
+            sides = []
+            for root, digest in ((kindle, kindle_digest), (mac, mac_digest)):
+                try:
+                    sides.append(backup_alignment_path(root, path))
+                except FileNotFoundError:
+                    if digest is not None:
+                        raise
+                    sides.append(root / path)  # Its .sdr folder is created only when the file is written.
+            on_kindle, on_mac = sides
+            for side, digest in ((on_kindle, kindle_digest), (on_mac, mac_digest)):
+                if side.is_symlink() or (file_digest(side) if side.is_file() else None) != digest:
+                    raise ValueError('The reading file changed during sync. Review sync again.')
+            if plan['winner'] == 'books':
+                # Apple Books is further along: move the Kindle there, keeping its highlights and notes.
+                recovery = save_reading_recovery(on_kindle, kindle_digest, path) if kindle_digest else None
+                if plan['note'] == 'books-finished':
+                    write_reading_status(on_kindle.parent.with_suffix('.epub'), 'complete')
+                else:
+                    write_reading_position(on_kindle, plan['books'])
+                updated = file_digest(on_kindle)
+                # A new file has no earlier version; undo removes it.
+                history.record_reading(kindle, on_kindle, updated, kindle_digest, recovery)
+                kindle_digest = updated
+                if mac_digest is None:
+                    # The Mac gets this new reading file in the next sync.
+                    sent['readingProgress'] += 1
+                    continue
+            elif plan['winner'] == 'mac':
                 # Mark the book finished in the Kindle's own file, keeping its highlights and notes.
                 recovery = save_reading_recovery(on_kindle, kindle_digest, path)
                 write_reading_status(on_kindle.parent.with_suffix('.epub'), 'complete')
@@ -3530,10 +3797,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send(import_epub(urllib.parse.parse_qs(url.query, keep_blank_values=True), upload, size))
             except (OSError, ValueError, KeyError) as exc:
                 return self.send({'error': str(exc)}, status=400)
-        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/sync-leftovers', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup'} or self.headers.get('Content-Type') != 'application/json':
+        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/sync-leftovers', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup', '/api/apple-books-preview', '/api/apple-books-add', '/api/full-disk-access'} or self.headers.get('Content-Type') != 'application/json':
             return self.send({'error': 'Unsupported request'}, status=400)
         try:
-            limit = 512 * 1024 if self.path in {'/api/sync', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-sync'} else 8192
+            limit = 512 * 1024 if self.path in {'/api/sync', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-sync', '/api/apple-books-add'} else 8192
             if self.path == '/api/metadata':
                 limit += 4 * ((MAX_COVER + 2) // 3)
             body = json.loads(self.read_body(limit - 1))
@@ -3577,6 +3844,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(apply_metadata_cleanup(body))
                 if self.path == '/api/genre-cleanup-preview':
                     return self.send(genre_cleanup_preview(body))
+                if self.path == '/api/apple-books-preview':
+                    return self.send(apple_books_preview())
+                if self.path == '/api/apple-books-add':
+                    return self.send(add_to_apple_books(body))
+                if self.path == '/api/full-disk-access':
+                    return self.send(open_full_disk_access_settings())
                 if self.path == '/api/sync-leftovers':
                     return self.send(clean_sync_leftovers(body.get('review')))
                 if self.path == '/api/sync-undo':
@@ -3665,7 +3938,7 @@ def lock_state_directory(folder):
 
 
 def main():
-    global ROOT, LOCAL_FIRST, JOURNAL
+    global ROOT, LOCAL_FIRST, JOURNAL, APPLE_BOOKS_ENABLED
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, help='Books folder, on the Kindle or your computer')
     parser.add_argument('--port', type=int, default=0, help='Local port for the interface (default: any free port)')
@@ -3685,6 +3958,7 @@ def main():
               'Run koshelf --browser to reopen a browser session that is already running.', file=sys.stderr)
         sys.exit(SERVICE_ALREADY_RUNNING)
     LOCAL_FIRST = args.library is None
+    APPLE_BOOKS_ENABLED = True
     if args.library:
         if args.library.is_dir(): select_library(args.library)
         else: ROOT = args.library.expanduser().absolute()

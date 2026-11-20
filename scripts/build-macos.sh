@@ -42,12 +42,28 @@ if "$portable"; then
     cp notices/PythonNotices.txt "$APP/Contents/Resources/PythonNotices.txt"
 fi
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
-cp app.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
+cp app.py apple_books.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
 cp epub_safety.py local_session.py "$APP/Contents/Resources/"
 cp static/index.html static/app.js static/style.css static/koshelf-icon.png "$APP/Contents/Resources/static/"
 if [ -f native/KoShelf.icns ]; then cp native/KoShelf.icns "$APP/Contents/Resources/KoShelf.icns"; fi
-codesign --force --sign - "$APP/Contents/MacOS/koshelf-kindle-converter"
-codesign --force --sign - "$APP"
+if [ -n "${KOSHELF_VERSION:-}" ]; then
+    # Label a development build, for example 1.1.2-dev, before it is signed.
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $KOSHELF_VERSION" "$APP/Contents/Info.plist"
+fi
+# macOS ties privacy permissions such as Full Disk Access to the signature. A stable
+# certificate keeps them across builds; ad hoc signing gives every build a new identity.
+identity=${KOSHELF_SIGNING_IDENTITY:-}
+if [ -z "$identity" ] && security find-identity -p codesigning 2>/dev/null | grep -q '"KoShelf Signing"'; then
+    identity="KoShelf Signing"
+fi
+if [ -z "$identity" ]; then
+    identity=-
+    echo "Signing ad hoc. Full Disk Access must be granted again after each build." >&2
+else
+    echo "Signing with: $identity" >&2
+fi
+codesign --force --sign "$identity" "$APP/Contents/MacOS/koshelf-kindle-converter"
+codesign --force --sign "$identity" "$APP"
 codesign --verify --deep --strict "$APP"
 rm -rf "$destination"
 mv "$APP" "$destination"

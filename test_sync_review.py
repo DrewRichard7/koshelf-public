@@ -109,7 +109,7 @@ class SyncReviewTests(unittest.TestCase):
         # KOReader's .old backup is synced quietly, not listed.
         self.assertEqual(preview['readingProgress'], [
             {'path': 'Book.sdr/metadata.epub.lua', 'book': 'Book', 'winner': 'kindle', 'kindle': 0.30, 'mac': 0.27,
-             'note': None}])
+             'books': None, 'note': None}])
         self.assertEqual(preview['versionDifferenceCount'], 0)
         self.assertEqual(result['kindle']['readingProgress'], 1)
         self.assertEqual(old_mac.read_bytes(), settings(0.30))
