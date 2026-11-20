@@ -812,14 +812,12 @@ def genre_cleanup_preview(body, *, fresh=False):
     save = body.get('saveMappings', False)
     if not isinstance(save, bool) or (save and 'mappings' not in body):
         raise ValueError('Provide genre mappings to save.')
-    if 'mappings' in body:
-        mappings = validate_mappings(body['mappings'])
-    else:
-        try:
-            with open_state_text(settings) as stream:
-                mappings = validate_mappings(json.load(stream))
-        except FileNotFoundError:
-            mappings = {}
+    try:
+        with open_state_text(settings) as stream:
+            saved_mappings = validate_mappings(json.load(stream))
+    except FileNotFoundError:
+        saved_mappings = {}
+    mappings = validate_mappings(body['mappings']) if 'mappings' in body else saved_mappings
 
     books = []
     skipped = 0
@@ -868,7 +866,8 @@ def genre_cleanup_preview(body, *, fresh=False):
         finally:
             if pending is not None:
                 pending.unlink(missing_ok=True)
-    return {**result, 'mappings': mappings, 'scope': scope, 'scanned': len(paths), 'skipped': skipped}
+    return {**result, 'mappings': mappings, 'savedMappings': mappings if save else saved_mappings,
+            'scope': scope, 'scanned': len(paths), 'skipped': skipped}
 
 
 def cleanup_revision(info):
@@ -886,14 +885,15 @@ def apply_metadata_cleanup(body):
         {'scope': 'selection', 'paths': [rel], 'mappings': body['mappings']}, fresh=True,
     )
     suggestion = next(iter(result['books']), None)
-    title, genres, accepted = body.get('title'), body.get('genres'), body.get('acceptedTags')
+    title, genres, accepted = body.get('title'), body.get('genres'), body.get('acceptedChanges')
     if (not suggestion or suggestion['revision'] != body['revision']
             or (title is not None and title != suggestion['proposedTitle'])
             or (genres is not None and (not suggestion['changes'] or genres != suggestion['proposed']))):
         raise ValueError('The approved changes differ from the current preview. Scan again.')
     if accepted is not None:
         # Each tag change is approved on its own; the genres come from the preview, not the request.
-        if genres is not None or not isinstance(accepted, list) or not all(isinstance(tag, str) for tag in accepted):
+        if (genres is not None or not isinstance(accepted, list)
+                or not all(isinstance(index, int) and not isinstance(index, bool) for index in accepted)):
             raise ValueError('Choose tag changes from the current preview.')
         try:
             genres = choose_changes(suggestion['current'], suggestion['changes'], accepted)
@@ -1313,6 +1313,7 @@ def sync_version_path(relative, digest, *, create=False):
 
 
 MAX_READING_VERSIONS = 5
+UNDOABLE_READING_SYNCS = 10
 
 
 def prune_sync_versions(kindle, keep=MAX_READING_VERSIONS):
@@ -1328,8 +1329,11 @@ def prune_sync_versions(kindle, keep=MAX_READING_VERSIONS):
             return 0
     except FileNotFoundError:
         return 0
-    needed = {action['backup'] for run in sync_history() for action in run['actions']
-              if isinstance(action, dict) and isinstance(action.get('backup'), str)}
+    # Undo needs the copies its actions name. Reading-file updates happen on
+    # nearly every sync, so only the most recent syncs keep theirs.
+    needed = {action['backup'] for index, run in enumerate(sync_history()) for action in run['actions']
+              if isinstance(action, dict) and isinstance(action.get('backup'), str)
+              and (action.get('kind') != 'reading' or (index < UNDOABLE_READING_SYNCS and not action.get('undone')))}
     groups = {}
     for base, dirs, files in os.walk(folder, followlinks=False):
         relative = PurePosixPath(Path(base).relative_to(folder).as_posix())
@@ -2052,6 +2056,14 @@ class SyncHistory:
                    previous=previous, backup=str(backup) if backup else None,
                    origin=origin.relative_to(root).as_posix() if origin else None)
 
+    def record_reading(self, root, path, digest, previous, backup):
+        """A KOReader reading file that sync replaced, so it can be undone."""
+        info = root.stat()
+        self.write('reading', id=uuid.uuid4().hex, root=str(root),
+                   side='Mac' if root == mac_library() else 'Kindle', identity=[info.st_dev, info.st_ino],
+                   path=path.relative_to(root).as_posix(), digest=digest, previous=previous,
+                   backup=str(backup), origin=None)
+
     def finish(self, *results):
         failed = sum(result['failed'] for result in results)
         errors = [error for result in results for error in result['errors']]
@@ -2146,6 +2158,12 @@ def undo_sync_action(run_id, action_id):
         else:
             preserve_sync_copy(path, digest, action_id)
             sync_restore_copy(backup, path, action['previous'], replace_digest=digest)
+    elif kind == 'reading':
+        backup = Path(action['backup'])
+        if backup.is_symlink() or not backup.is_file() or file_digest(backup) != action['previous']:
+            raise ValueError('The earlier reading file is no longer available.')
+        preserve_sync_copy(path, digest, action_id)
+        sync_restore_copy(backup, path, action['previous'], replace_digest=digest)
     elif kind in ('copied', 'saved version'):
         if any(entry['kind'] == 'replaced' and not entry.get('undone')
                and entry['backup'] == str(path) for run in history for entry in run['actions']):
@@ -2224,17 +2242,24 @@ def reading_fraction(settings):
     return reading.get('readingProgress')
 
 
+def save_reading_recovery(path, digest, relative):
+    """Keep the current version of a reading file before sync changes it."""
+    recovery = sync_version_path(relative, digest, create=True)
+    if not recovery.exists():
+        sync_restore_copy(path, recovery, digest)
+    elif recovery.is_symlink() or file_digest(recovery) != digest:
+        raise ValueError('A conflicting recovery copy exists.')
+    return recovery
+
+
 def copy_reading_file(source, destination, digest, relative):
-    """Replace a reading file after saving the version it replaces for recovery."""
+    """Replace a reading file after saving the version it replaces. Returns that recovery copy."""
     if destination.is_symlink() or not destination.is_file():
         raise ValueError('The reading file moved during sync.')
     old_digest = file_digest(destination)
-    recovery = sync_version_path(relative, old_digest, create=True)
-    if not recovery.exists():
-        sync_restore_copy(destination, recovery, old_digest)
-    elif recovery.is_symlink() or file_digest(recovery) != old_digest:
-        raise ValueError('A conflicting recovery copy exists.')
+    recovery = save_reading_recovery(destination, old_digest, relative)
     sync_restore_copy(source, destination, digest, replace_digest=old_digest)
+    return recovery, old_digest
 
 
 def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
@@ -2299,9 +2324,19 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
                 if reading_settings_file(path):
                     on_kindle, on_mac = reading_fraction(source), reading_fraction(destination)
                     if on_kindle is not None and on_mac is not None:
-                        # Whichever copy is further along wins; the Kindle wins a tie.
-                        reading_plan[path] = {'winner': 'mac' if on_mac > on_kindle else 'kindle',
-                                              'kindle': on_kindle, 'mac': on_mac, 'digests': [checksum, saved]}
+                        # The Kindle's file holds the reading position, highlights, and notes,
+                        # so it is never replaced. A book finished on the Mac copies only
+                        # that status. Any other lead on the Mac can't move the position.
+                        plan = {'winner': 'kindle', 'kindle': on_kindle, 'mac': on_mac,
+                                'digests': [checksum, saved], 'note': None}
+                        if on_mac > on_kindle:
+                            if (path.lower().endswith('metadata.epub.lua') and on_mac >= 1
+                                    and parse_koreader_reading(destination).get('readingStatus') == 'complete'):
+                                plan['winner'] = 'mac'
+                                plan['note'] = 'finished'
+                            else:
+                                plan['note'] = 'mac-ahead'
+                        reading_plan[path] = plan
                         continue
                 if (source.suffix.lower() == '.epub' and not source.name.startswith('.')
                         and not any(part.startswith('.') or part.lower().endswith('.sdr')
@@ -2319,6 +2354,8 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
     # Books that match by content are listed with their own choices, not as new files.
     matched = set()
     for group in backup.get('groups', []):
+        if not group['single']:
+            continue  # Several copies sync as ordinary files.
         for path in group['kindle']:
             matched.update([path, str(PurePosixPath(path).with_suffix('.sdr')) + '/'])
     incoming = [path for path in incoming
@@ -2348,7 +2385,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
                                     for path in choosable},
                 'versionDifferenceCount': len(review_conflicts), 'versionDifferencePaths': review_conflicts[:100],
                 'readingProgress': [{'path': path, 'book': PurePosixPath(path).parent.stem, 'winner': plan['winner'],
-                                     'kindle': plan['kindle'], 'mac': plan['mac']}
+                                     'kindle': plan['kindle'], 'mac': plan['mac'], 'note': plan.get('note')}
                                     for path, plan in sorted(reading_plan.items()) if not plan.get('hidden')][:100],
                 'moveGroups': [{**group, 'title': matching_title(mac, group)} for group in backup.get('groups', [])]}
     if review != token:
@@ -2360,8 +2397,10 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
         raise ValueError('Select EPUB versions from the current sync review.')
     use_mac = sorted(set(use_mac) | set(mac_newer))
 
-    if choice == 'merge':
+    if choice in {'merge', 'align'}:
         for group in backup_conflicts(kindle, mac, two_way=True):
+            if choice == 'align' and len(group['kindle']) == 1 and len(group['backup']) == 1:
+                continue  # Chosen per book.
             for path in group['backup']:
                 if group['digest'] not in archived.get(path, ()) and not os.path.lexists(kindle / path):
                     send[path] = group['digest']
@@ -2433,10 +2472,15 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
             if (on_kindle.is_symlink() or on_mac.is_symlink()
                     or file_digest(on_kindle) != kindle_digest or file_digest(on_mac) != mac_digest):
                 raise ValueError('The reading file changed during sync. Review sync again.')
-            if plan['winner'] == 'kindle':
-                copy_reading_file(on_kindle, on_mac, kindle_digest, path)
-            else:
-                copy_reading_file(on_mac, on_kindle, mac_digest, path)
+            if plan['winner'] == 'mac':
+                # Mark the book finished in the Kindle's own file, keeping its highlights and notes.
+                recovery = save_reading_recovery(on_kindle, kindle_digest, path)
+                write_reading_status(on_kindle.parent.with_suffix('.epub'), 'complete')
+                updated = file_digest(on_kindle)
+                history.record_reading(kindle, on_kindle, updated, kindle_digest, recovery)
+                kindle_digest = updated
+            recovery, previous = copy_reading_file(on_kindle, on_mac, kindle_digest, path)
+            history.record_reading(mac, on_mac, kindle_digest, previous, recovery)
             if not plan.get('hidden'):
                 sent['readingProgress'] += 1
         except (OSError, ValueError) as exc:
@@ -2538,14 +2582,14 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
         # Each matching book gets its own choice of name and folder.
         moves = moves if isinstance(moves, dict) else {}
         if any(len(group['kindle']) == 1 and len(group['backup']) == 1
-               and moves.get(group['digest']) not in {'kindle', 'backup'} for group in conflicts):
+               and moves.get(group['digest']) not in {'kindle', 'backup', 'both'} for group in conflicts):
             raise ValueError('Choose a name and folder for each matching book.')
     if preview or (conflicts and choice is None):
         return {'review': token, 'count': len(conflicts), 'examples': [
             {side: group[side][:3] for side in ('kindle', 'backup')} for group in conflicts[:5]
         ], 'groups': [{'id': group['digest'], 'kindle': group['kindle'][:3], 'mac': group['backup'][:3],
                        'single': len(group['kindle']) == 1 and len(group['backup']) == 1}
-                      for group in conflicts[:100]]}
+                      for group in conflicts]}
     target.mkdir(parents=True, exist_ok=True)
     target_stat = target.lstat()
     device = root_stat.st_dev
@@ -2558,8 +2602,16 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
     excluded = {PurePosixPath(path) for path in skip_files}
     if choice in {'kindle', 'backup', 'align'}:
         for group in conflicts:
+            single = len(group['kindle']) == 1 and len(group['backup']) == 1
+            if choice == 'align' and (not single or moves[group['digest']] == 'both'):
+                if single:
+                    # Keep both: leave this book where it is on each side for now.
+                    path = PurePosixPath(group['kindle'][0])
+                    excluded.update([path, path.with_suffix('.sdr')])
+                # Several copies sync as ordinary files, as before per-book choices.
+                continue
             try:
-                if len(group['kindle']) != 1 or len(group['backup']) != 1:
+                if not single:
                     raise ValueError('Multiple copies already exist. Left all copies in place.')
                 validate_source()
                 side = moves[group['digest']] if choice == 'align' else choice

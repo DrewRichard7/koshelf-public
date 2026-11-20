@@ -122,11 +122,20 @@ class GenreCleanupPreviewTests(unittest.TestCase):
         row = preview['books'][0]
         request = {'path': book.name, 'revision': row['revision'], 'mappings': {}}
         with self.assertRaisesRegex(ValueError, 'differ'):
-            app.apply_metadata_cleanup({**request, 'acceptedTags': ['Not a suggested tag']})
+            app.apply_metadata_cleanup({**request, 'acceptedChanges': [99]})
         with self.assertRaisesRegex(ValueError, 'at least one'):
-            app.apply_metadata_cleanup({**request, 'acceptedTags': []})
-        saved = app.apply_metadata_cleanup({**request, 'acceptedTags': [row['changes'][0]['tag']]})
-        self.assertEqual(saved['genres'], app.choose_changes(row['current'], row['changes'], [row['changes'][0]['tag']]))
+            app.apply_metadata_cleanup({**request, 'acceptedChanges': []})
+        first = row['changes'][0]['index']
+        saved = app.apply_metadata_cleanup({**request, 'acceptedChanges': [first]})
+        self.assertEqual(saved['genres'], app.choose_changes(row['current'], row['changes'], [first]))
+
+    def test_previewed_mappings_are_reported_apart_from_saved_ones(self):
+        self.book('Novel.epub')
+        draft = app.genre_cleanup_preview({'mappings': {'sci-fi': 'Sci-Fi'}})
+        self.assertEqual((draft['mappings'], draft['savedMappings']), ({'sci-fi': 'Sci-Fi'}, {}))
+        saved = app.genre_cleanup_preview({'mappings': {'sci-fi': 'Sci-Fi'}, 'saveMappings': True})
+        self.assertEqual(saved['savedMappings'], {'sci-fi': 'Sci-Fi'})
+        self.assertEqual(app.genre_cleanup_preview({})['savedMappings'], {'sci-fi': 'Sci-Fi'})
 
     def test_ambiguous_titles_remain_intact_when_applying_genres(self):
         cases = (

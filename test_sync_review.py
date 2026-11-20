@@ -65,6 +65,39 @@ class SyncReviewTests(unittest.TestCase):
         self.assertEqual([p.name for p in self.mac.iterdir()], ['Kindle Name.epub'])
         self.assertEqual([p.name for p in self.kindle.iterdir()], ['Kindle Name.epub'])
 
+    def test_keep_both_leaves_that_book_and_syncs_the_rest(self):
+        self.put(self.kindle, 'Old Name.epub', b'same book')
+        self.put(self.mac, 'New Name.epub', b'same book')
+        self.put(self.kindle, 'Another.epub', b'another book')
+        preview = app.sync_libraries(self.kindle)
+        [group] = preview['moveGroups']
+        app.sync_libraries(self.kindle, 'align', preview['review'], moves={group['id']: 'both'})
+        self.assertEqual(sorted(p.name for p in self.mac.iterdir()), ['Another.epub', 'New Name.epub'])
+        self.assertEqual(sorted(p.name for p in self.kindle.iterdir()), ['Another.epub', 'Old Name.epub'])
+
+    def test_several_identical_copies_sync_as_ordinary_files(self):
+        self.put(self.kindle, 'A.epub', b'same book')
+        self.put(self.kindle, 'C.epub', b'same book')
+        self.put(self.kindle, 'C.sdr/metadata.epub.lua', settings(0.4))
+        self.put(self.mac, 'A.epub', b'same book')
+        preview = app.sync_libraries(self.kindle)
+        self.assertFalse(preview['moveGroups'][0]['single'])
+        self.assertIn('C.epub', preview['toMacPaths'])
+        result = app.sync_libraries(self.kindle, 'align', preview['review'], moves={})
+        self.assertEqual(result['mac']['failed'], 0)
+        self.assertTrue((self.mac / 'C.epub').is_file())
+        self.assertTrue((self.mac / 'C.sdr/metadata.epub.lua').is_file())
+
+    def test_more_than_a_hundred_renames_can_all_be_chosen(self):
+        for index in range(105):
+            self.put(self.kindle, f'Old {index}.epub', f'book {index}'.encode())
+            self.put(self.mac, f'New {index}.epub', f'book {index}'.encode())
+        preview = app.sync_libraries(self.kindle)
+        self.assertEqual(len(preview['moveGroups']), 105)
+        moves = {group['id']: 'backup' for group in preview['moveGroups']}
+        result = app.sync_libraries(self.kindle, 'align', preview['review'], moves=moves)
+        self.assertEqual(result['mac']['moved'], 105)
+
     def test_further_kindle_progress_updates_the_mac(self):
         self.put(self.kindle, 'Book.epub', b'book')
         self.put(self.mac, 'Book.epub', b'book')
@@ -75,7 +108,8 @@ class SyncReviewTests(unittest.TestCase):
         preview, result = self.sync(choice='copy')
         # KOReader's .old backup is synced quietly, not listed.
         self.assertEqual(preview['readingProgress'], [
-            {'path': 'Book.sdr/metadata.epub.lua', 'book': 'Book', 'winner': 'kindle', 'kindle': 0.30, 'mac': 0.27}])
+            {'path': 'Book.sdr/metadata.epub.lua', 'book': 'Book', 'winner': 'kindle', 'kindle': 0.30, 'mac': 0.27,
+             'note': None}])
         self.assertEqual(preview['versionDifferenceCount'], 0)
         self.assertEqual(result['kindle']['readingProgress'], 1)
         self.assertEqual(old_mac.read_bytes(), settings(0.30))
@@ -84,16 +118,40 @@ class SyncReviewTests(unittest.TestCase):
         self.assertIn(settings(0.27), saved)
         self.assertEqual(app.sync_libraries(self.kindle)['readingProgress'], [])
 
-    def test_book_finished_on_mac_wins(self):
+    def test_book_finished_on_mac_keeps_kindle_highlights(self):
         self.put(self.kindle, 'Book.epub', b'book')
         self.put(self.mac, 'Book.epub', b'book')
-        kindle = self.put(self.kindle, 'Book.sdr/metadata.epub.lua', settings(0.60))
-        self.put(self.mac, 'Book.sdr/metadata.epub.lua', settings(0.50, 'complete'))
+        highlights = settings(0.60).replace(b'return {\n', b'return {\n    ["annotations"] = {"kindle highlight"},\n')
+        kindle = self.put(self.kindle, 'Book.sdr/metadata.epub.lua', highlights)
+        mac = self.put(self.mac, 'Book.sdr/metadata.epub.lua', settings(0.50, 'complete'))
         preview, result = self.sync(choice='copy')
-        self.assertEqual(preview['readingProgress'][0]['winner'], 'mac')
-        self.assertEqual(kindle.read_bytes(), settings(0.50, 'complete'))
-        saved = [p.read_bytes() for p in (self.base / 'state/sync-versions/Book.sdr').iterdir()]
-        self.assertIn(settings(0.60), saved)
+        self.assertEqual((preview['readingProgress'][0]['winner'], preview['readingProgress'][0]['note']), ('mac', 'finished'))
+        # Only the status moves to the Kindle; its position and highlights stay.
+        updated = kindle.read_bytes()
+        self.assertIn(b'kindle highlight', updated)
+        self.assertIn(b'["percent_finished"] = 0.6', updated)
+        self.assertIn(b'["status"] = "complete"', updated)
+        self.assertEqual(mac.read_bytes(), updated)
+        self.assertEqual(app.sync_libraries(self.kindle)['readingProgress'], [])
+        # Both replacements can be undone.
+        run = app.sync_history()[0]
+        reading = [action for action in run['actions'] if action['kind'] == 'reading']
+        self.assertEqual(sorted(action['side'] for action in reading), ['Kindle', 'Mac'])
+        with patch.object(app, 'kindle_library', return_value=self.kindle):
+            for action in reading:
+                app.undo_sync_action(run['id'], action['id'])
+        self.assertEqual(kindle.read_bytes(), highlights)
+        self.assertEqual(mac.read_bytes(), settings(0.50, 'complete'))
+
+    def test_stale_mac_lead_does_not_replace_the_kindle(self):
+        self.put(self.kindle, 'Book.epub', b'book')
+        self.put(self.mac, 'Book.epub', b'book')
+        kindle = self.put(self.kindle, 'Book.sdr/metadata.epub.lua', settings(0.10))
+        mac = self.put(self.mac, 'Book.sdr/metadata.epub.lua', settings(0.80))
+        preview, _ = self.sync(choice='copy')
+        self.assertEqual((preview['readingProgress'][0]['winner'], preview['readingProgress'][0]['note']), ('kindle', 'mac-ahead'))
+        self.assertEqual(kindle.read_bytes(), settings(0.10))
+        self.assertEqual(mac.read_bytes(), settings(0.10))
 
     def test_unreadable_progress_is_still_a_version_difference(self):
         self.put(self.kindle, 'Book.epub', b'book')

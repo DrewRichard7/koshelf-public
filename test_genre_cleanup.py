@@ -26,7 +26,7 @@ class GenreCleanupTests(unittest.TestCase):
         self.assertEqual(result["books"][0]["proposed"], ["award winner"])
         self.assertEqual(result["unmappedBooks"], 2)
         self.assertEqual(result["tags"][0], {
-            "tag": "Award Winner", "key": "award winner", "count": 2, "replacement": None,
+            "tag": "Award Winner", "key": "award winner", "count": 2, "replacement": None, "known": False,
         })
 
     def test_custom_rules_override_defaults_and_can_remove_tags(self):
@@ -59,15 +59,24 @@ class GenreCleanupTests(unittest.TestCase):
     def test_each_tag_change_can_be_accepted_on_its_own(self):
         source = book("Novel.epub", "Fiction", "Sci-Fi", "Pulitzer Prize")
         suggestion, = preview_genres([source])["books"]
+        changes = suggestion["changes"]
+        self.assertEqual([change["index"] for change in changes], [0, 1])
         self.assertEqual(suggestion["proposed"], ["Science Fiction", "Pulitzer Prize"])
-        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Sci-Fi"]),
-                         ["Fiction", "Science Fiction", "Pulitzer Prize"])
-        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Fiction"]),
-                         ["Sci-Fi", "Pulitzer Prize"])
-        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Fiction", "Sci-Fi"]),
-                         suggestion["proposed"])
+        self.assertEqual(choose_changes(source["genres"], changes, [1]), ["Fiction", "Science Fiction", "Pulitzer Prize"])
+        self.assertEqual(choose_changes(source["genres"], changes, [0]), ["Sci-Fi", "Pulitzer Prize"])
+        self.assertEqual(choose_changes(source["genres"], changes, [0, 1]), suggestion["proposed"])
         with self.assertRaises(ValueError):
-            choose_changes(source["genres"], suggestion["changes"], ["Pulitzer Prize"])
+            choose_changes(source["genres"], changes, [2])
+
+    def test_partial_choices_never_duplicate_or_drop_genres(self):
+        source = book("Novel.epub", "Sci-Fi", "Science Fiction")
+        suggestion, = preview_genres([source])["books"]
+        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], [0]), ["Science Fiction"])
+        # Removing a repeated tag removes only the repeat.
+        repeated = book("Other.epub", "Fantasy", "Fantasy")
+        suggestion, = preview_genres([repeated])["books"]
+        self.assertEqual([change["index"] for change in suggestion["changes"]], [1])
+        self.assertEqual(choose_changes(repeated["genres"], suggestion["changes"], [1]), ["Fantasy"])
 
     def test_recognized_tag_covers_current_and_future_books(self):
         recognized = {"western": "Western"}
