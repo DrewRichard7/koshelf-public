@@ -4,6 +4,9 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **Sync no longer clutters libraries with backup copies.** When a Kindle file differs from the Mac file at the same path, sync keeps the Kindle version in KoShelf's private recovery folder. Earlier releases saved it in the Mac library as `Title (backup …)`, where it appeared on the shelf and synced to iCloud Drive.
+- **Books edited on the Mac update the Kindle.** Sync recognizes a Kindle copy that predates an edit made in KoShelf and updates it, instead of reporting a conflict.
+- **Sync and backup skip macOS metadata files.** Hidden files that macOS writes on the Kindle's drive, such as `._` files and `.DS_Store`, are no longer copied.
 - Contributor notes in `CLAUDE.md`.
 - The README mentions the **Quit Now** prompt.
 

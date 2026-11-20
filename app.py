@@ -1239,6 +1239,85 @@ def align_backup_book(root, target, group, choice):
     return base, source, destination
 
 
+# macOS writes these on FAT drives such as a Kindle. They hold Finder
+# metadata rather than books and never belong in a library sync or backup.
+SYSTEM_JUNK = {'.DS_Store', '.Trashes', '.Spotlight-V100', '.fseventsd', '.TemporaryItems',
+               '.apdisk', '.DocumentRevisions-V100', '.VolumeIcon.icns'}
+
+
+def system_junk(name):
+    return name.startswith('._') or name in SYSTEM_JUNK
+
+
+def sync_version_path(relative, digest, *, create=False):
+    """Where sync keeps a Kindle version that differs from the Mac copy.
+
+    Recovery copies live in KoShelf's private data folder, mirroring the
+    library path, so they never appear on the shelf or sync to iCloud Drive.
+    """
+    relative = PurePosixPath(relative)
+    parts = relative.parts
+    if not parts or relative.is_absolute() or any(part in ('', '.', '..') for part in parts):
+        raise ValueError('Invalid sync path.')
+    if create:
+        folder = private_state_subdirectory(JOURNAL.parent, 'sync-versions', *parts[:-1])
+    else:
+        folder = JOURNAL.parent.joinpath('sync-versions', *parts[:-1])
+    return backup_version(folder / parts[-1], digest)
+
+
+def saved_sync_version(relative, digest, library_path_, *, fresh=False):
+    """Find the saved Kindle version, including copies older releases kept in the library."""
+    for version in (sync_version_path(relative, digest), backup_version(Path(library_path_), digest)):
+        try:
+            info = version.lstat()
+        except FileNotFoundError:
+            continue
+        if statmod.S_ISREG(info.st_mode) and (file_digest(version) if fresh else sync_digest(version, info)) == digest:
+            return version
+    return None
+
+
+def mac_edit_history(mac):
+    """Earlier contents of Mac books that KoShelf edited, keyed by library path."""
+    versions = {}
+    libraries = {str(mac)}
+    try:
+        libraries.add(str(mac.resolve()))
+        with open_state_text(JOURNAL) as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (event.get('operation') == 'edit-metadata' and event.get('status') == 'completed'
+                        and event.get('library') in libraries and isinstance(event.get('source'), str)
+                        and isinstance(event.get('sha256'), str)):
+                    # Mac and Kindle volumes are case-insensitive, so match paths that way.
+                    versions.setdefault(event['source'].casefold(), set()).add(event['sha256'])
+    except FileNotFoundError:
+        pass
+    return versions
+
+
+def reverted_kindle_updates():
+    """Kindle replacements the user undid, as (casefolded path, Kindle digest) pairs.
+
+    Sync must not reapply these on its own after the user chose the Kindle version.
+    """
+    return {(action['path'].casefold(), action['previous'])
+            for run in sync_history() for action in run['actions']
+            if action.get('kind') == 'replaced' and action.get('undone')
+            and isinstance(action.get('path'), str) and isinstance(action.get('previous'), str)}
+
+
+def stale_after_mac_edit(relative, kindle_digest, edits, reverted):
+    """Whether this Kindle EPUB is a version from before an edit made in KoShelf."""
+    key = relative.casefold()
+    return (relative.lower().endswith('.epub') and kindle_digest in edits.get(key, ())
+            and (key, kindle_digest) not in reverted)
+
+
 def backup_version(path, digest):
     stem = path.stem.encode('utf-8')[:150].decode('utf-8', errors='ignore')
     return path.with_name(f'{stem} (backup {digest[:16]}){path.suffix}')
@@ -1472,6 +1551,8 @@ def sync_needed(root, target):
         raise ValueError('The Mac library must not be a symbolic link.')
     device = root.stat().st_dev
     archived = archived_paths(target, root)
+    edits = mac_edit_history(target)
+    reverted = reverted_kindle_updates() if edits else set()
 
     def onerror(exc):
         raise exc
@@ -1497,12 +1578,14 @@ def sync_needed(root, target):
             return True
         kept = []
         for name in dirs:
+            if system_junk(name):
+                continue
             info = os.lstat(os.path.join(base, name))
             if not statmod.S_ISLNK(info.st_mode) and info.st_dev == device:
                 kept.append(name)
         dirs[:] = kept
         for name in files:
-            if name.startswith('.koshelf-edit-'):
+            if name.startswith('.koshelf-edit-') or system_junk(name):
                 continue
             source = os.path.join(base, name)
             info = os.lstat(source)
@@ -1518,11 +1601,10 @@ def sync_needed(root, target):
             digest = sync_digest(source, info)
             if saved.st_size == info.st_size and sync_digest(destination, saved) == digest:
                 continue
-            version = backup_version(Path(destination), digest)
-            if not regular(version):
-                return True
-            saved = version.stat()
-            if saved.st_size != info.st_size or sync_digest(version, saved) != digest:
+            # A saved Kindle version settles a conflict, but not a book that is
+            # still waiting for the edited Mac version.
+            if (saved_sync_version(relative, digest, destination) is None
+                    or stale_after_mac_edit(relative, digest, edits, reverted)):
                 return True
     return False
 
@@ -1608,8 +1690,8 @@ def copy_to_kindle(mac, kindle, identity, transfers, *, replacements=None, histo
                 if history:
                     history.record('copied', kindle, destination, checksum)
             else:
-                archive = backup_version(source, previous)
-                if archive.is_symlink() or not archive.is_file() or file_digest(archive) != previous:
+                archive = saved_sync_version(relative, previous, source, fresh=True)
+                if archive is None:
                     raise ValueError('Could not verify the original Kindle EPUB backup.')
                 if destination.is_symlink() or not destination.is_file() or file_digest(destination) != previous:
                     raise ValueError('The Kindle EPUB changed during sync.')
@@ -1917,6 +1999,8 @@ def undo_sync_action(run_id, action_id):
         action = None
     if not action or action.get('undone'):
         raise ValueError('This sync action is no longer available to undo.')
+    if action['kind'] == 'kept version':
+        raise ValueError('This recovery copy is stored privately, and nothing on your shelves changed.')
     root = mac_library() if action['side'] == 'Mac' else kindle_library()
     if root is None or str(root) != action['root'] or root.is_symlink():
         raise ValueError('Reconnect the library used for this sync.')
@@ -1933,7 +2017,7 @@ def undo_sync_action(run_id, action_id):
         move_epub(path, origin, root)
     elif kind in ('archived', 'replaced'):
         backup = Path(action['backup'])
-        if kind == 'replaced' and not backup.exists():
+        if kind == 'replaced' and not backup.exists() and backup.is_relative_to(mac_library()):
             backup = next((Path(entry['archivePath']) for entry in archived_duplicates()
                            if entry['path'] == backup.relative_to(mac_library()).as_posix()
                            and entry['sha256'] == action['previous']), backup)
@@ -2002,7 +2086,7 @@ def empty_folder_removal_plan(mac, kindle):
             if os.path.lexists(source) or destination.is_symlink() or not destination.is_dir():
                 continue
             info = destination.stat()
-            if info.st_dev == kindle.stat().st_dev and not any(destination.iterdir()):
+            if info.st_dev == kindle.stat().st_dev and not any(not system_junk(child.name) for child in destination.iterdir()):
                 plan[relative] = (info.st_dev, info.st_ino, info.st_mtime_ns)
         except (FileNotFoundError, ValueError):
             continue
@@ -2025,14 +2109,14 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     mac_device = mac.stat().st_dev
     for base, dirs, files in os.walk(kindle, followlinks=False, onerror=raise_walk_error):
         base = Path(base)
-        dirs[:] = sorted(name for name in dirs if not (base / name).is_symlink()
+        dirs[:] = sorted(name for name in dirs if not system_junk(name) and not (base / name).is_symlink()
                          and (base / name).stat().st_dev == identity.st_dev)
         relative_folder = base.relative_to(kindle)
         out = mac / relative_folder
         try:
             out_info = out.lstat()
         except FileNotFoundError:
-            if relative_folder.parts and not dirs and not files:
+            if relative_folder.parts and not dirs and not any(not system_junk(name) for name in files):
                 incoming_folders.append(relative_folder.as_posix())
         else:
             if not statmod.S_ISDIR(out_info.st_mode) or out_info.st_dev != mac_device:
@@ -2042,7 +2126,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
             source = base / name
             info = source.lstat()
             if (not statmod.S_ISREG(info.st_mode) or info.st_dev != identity.st_dev
-                    or name.startswith('.koshelf-edit-')):
+                    or name.startswith('.koshelf-edit-') or system_junk(name)):
                 continue
             path = source.relative_to(kindle).as_posix()
             destination = out / name
@@ -2067,15 +2151,8 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                                     for part in PurePosixPath(path).parts[:-1])
                         and destination.resolve().is_relative_to(mac.resolve())):
                     epub_conflicts[path] = (checksum, saved)
-                version = backup_version(destination, checksum)
-                try:
-                    version_info = version.lstat()
-                except FileNotFoundError:
-                    pass
-                else:
-                    if (statmod.S_ISREG(version_info.st_mode) and version_info.st_dev == mac_device
-                            and sync_digest(version, version_info) == checksum):
-                        continue
+                if saved_sync_version(path, checksum, destination) is not None:
+                    continue
                 conflicts.append(path)
                 signatures.append((path, checksum, saved))
             else:
@@ -2085,17 +2162,26 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     status_plan = status_sync_plan(mac, kindle, send)
     remove_folders = empty_folder_removal_plan(mac, kindle)
     incoming_folders = [path for path in incoming_folders if path not in remove_folders]
-    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders]).encode()).hexdigest()
+    # A Kindle copy that matches an earlier Mac version predates an edit made
+    # in KoShelf, so the Mac version is simply newer: update the Kindle. An
+    # undone update is a choice to keep the Kindle version, so offer it instead.
+    edits = mac_edit_history(mac)
+    reverted = reverted_kindle_updates() if edits else set()
+    mac_newer = sorted(path for path, (kindle_digest, _) in epub_conflicts.items()
+                       if stale_after_mac_edit(path, kindle_digest, edits, reverted))
+    choosable = [path for path in epub_conflicts if path not in mac_newer]
+    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders, mac_newer]).encode()).hexdigest()
     if choice is None:
-        review_conflicts = sorted(set(conflicts) | epub_conflicts.keys())
+        conflicts = [path for path in conflicts if path not in mac_newer]
+        review_conflicts = sorted((set(conflicts) | epub_conflicts.keys()) - set(mac_newer))
         return {**backup, 'review': token, 'readingStatuses': list(status_plan.values()), 'removeEmptyFolders': list(remove_folders), 'incomingEmptyFolders': incoming_folders, 'toKindle': len(send), 'toKindlePaths': list(send)[:100],
                 'archiveOnKindle': [{'remove': path, 'keep': decision[0]}
                                     for path, decision in duplicate_plan.items()],
                 'toMac': len(incoming), 'toMacPaths': incoming[:100],
                 'conflicts': len(conflicts), 'conflictPaths': conflicts[:100],
-                'epubConflictPaths': list(epub_conflicts),
+                'epubConflictPaths': choosable, 'macNewerPaths': mac_newer,
                 'epubComparisons': {path: compare_epub_versions(mac / path, kindle / path)
-                                    for path in epub_conflicts},
+                                    for path in choosable},
                 'versionDifferenceCount': len(review_conflicts), 'versionDifferencePaths': review_conflicts[:100]}
     if review != token:
         raise ValueError('The libraries changed during review. Open Sync libraries again.')
@@ -2104,6 +2190,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
         use_mac = []
     if not isinstance(use_mac, list) or any(not isinstance(path, str) or path not in epub_conflicts for path in use_mac):
         raise ValueError('Select EPUB versions from the current sync review.')
+    use_mac = sorted(set(use_mac) | set(mac_newer))
 
     if choice == 'merge':
         for group in backup_conflicts(kindle, mac, two_way=True):
@@ -2134,6 +2221,12 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                     or (info.st_dev, info.st_ino, info.st_mtime_ns) != tuple(signature)
                     or os.path.lexists(backup_alignment_path(mac, relative))):
                 raise ValueError('The folder changed during sync.')
+            # Only macOS metadata files may remain; remove them so the folder can go.
+            for child in path.iterdir():
+                child_info = child.lstat()
+                if not system_junk(child.name) or not statmod.S_ISREG(child_info.st_mode):
+                    raise ValueError('The folder is no longer empty.')
+                child.unlink()
             path.rmdir()
             sent['removedEmptyFolders'] += 1
             journal({'operation': 'sync-empty-folder-removal', 'library': str(mac),
@@ -2288,9 +2381,9 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
                     path = PurePosixPath(rel)
                     excluded.update([path, path.with_suffix('.sdr')])
 
-    def matching(path, size, digest):
+    def matching(path, size, digest, *, same_device=True):
         info = path.lstat()
-        return (statmod.S_ISREG(info.st_mode) and info.st_dev == target_stat.st_dev
+        return (statmod.S_ISREG(info.st_mode) and (not same_device or info.st_dev == target_stat.st_dev)
                 and info.st_size == size and file_digest(path) == digest)
 
     def copy_file(source, destination):
@@ -2315,9 +2408,19 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
                 result['skipped'] += 1
                 return
             # A stable content suffix makes changed versions idempotent as well.
-            destination = backup_version(destination, digest)
+            book = destination
+            if two_way:
+                # Library sync keeps the differing Kindle version privately. Copies
+                # that earlier releases saved in the library still count.
+                legacy = backup_version(destination, digest)
+                if os.path.lexists(legacy) and matching(legacy, info.st_size, digest):
+                    result['skipped'] += 1
+                    return
+                destination = sync_version_path(source.relative_to(root).as_posix(), digest, create=True)
+            else:
+                destination = backup_version(destination, digest)
             if os.path.lexists(destination):
-                if matching(destination, info.st_size, digest):
+                if matching(destination, info.st_size, digest, same_device=not two_way):
                     result['skipped'] += 1
                     return
                 raise ValueError('a conflicting file occupies the backup version path')
@@ -2343,7 +2446,10 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
             result['copied'] += 1
             if versioned: result['versions'] += 1
             if history:
-                history.record('saved version' if versioned else 'copied', target, destination, copied_digest)
+                if versioned and two_way:
+                    history.record('kept version', target, book, copied_digest, backup=destination)
+                else:
+                    history.record('saved version' if versioned else 'copied', target, destination, copied_digest)
         finally:
             if temporary is not None: temporary.unlink(missing_ok=True)
 
@@ -2372,7 +2478,7 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
         children = []
         for name in dirs:
             child = base / name
-            if relative / name in excluded or (relative / name).as_posix() in skip_folders: continue
+            if system_junk(name) or relative / name in excluded or (relative / name).as_posix() in skip_folders: continue
             try:
                 if child.is_symlink() or child.stat().st_dev != device: result['ignored'] += 1
                 else: children.append(name)
@@ -2381,6 +2487,8 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
         for name in sorted(files):
             source = base / name
             if relative / name in excluded: continue
+            if system_junk(name):
+                continue
             if source.is_symlink() or name.startswith('.koshelf-edit-'):
                 result['ignored'] += 1
                 continue

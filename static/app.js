@@ -866,12 +866,12 @@ async function loadSyncHistory(expandedRun) {
       for (const message of run.errors || []) card.append(el('p', message));
       for (const action of run.actions) {
         const row = el('div', null, 'shelf-report-row');
-        const labels = {copied:'Copied', replaced:'Replaced', archived:'Archived', moved:'Moved', 'saved version':'Saved older version'};
+        const labels = {copied:'Copied', replaced:'Replaced', archived:'Archived', moved:'Moved', 'saved version':'Saved older version', 'kept version':'Kept the Kindle version in KoShelf’s recovery folder'};
         const name = action.origin ? `${action.origin} → ${action.path}` : action.path;
         const description = el('div');
         description.append(el('strong', name), el('small', `${action.side} · ${labels[action.kind]}${action.undone ? ' · Undone' : ''}`));
         row.append(description);
-        if (!action.undone) {
+        if (!action.undone && action.kind !== 'kept version') {
           const undo = el('button', 'Undo…', 'button');
           undo.disabled = action.side === 'Kindle' && !device.kindle;
           undo.onclick = () => {
@@ -2516,6 +2516,7 @@ function reviewSync(preview) {
   const sections = [
     ['sync-to-mac', preview.toMac, 'Kindle → Mac · New files', preview.toMacPaths],
     ['sync-to-kindle', preview.toKindle, 'Mac → Kindle · New EPUBs', preview.toKindlePaths],
+    ['sync-mac-newer', (preview.macNewerPaths || []).length, 'Mac → Kindle · Edited on your Mac', preview.macNewerPaths || []],
     ['sync-conflict-count', preview.versionDifferenceCount ?? preview.conflicts, 'Different versions at the same path', preview.versionDifferencePaths || preview.conflictPaths],
     ['sync-folder-count', preview.count, 'Matching books in different folders',
       preview.examples.map(group => `Kindle: ${group.kindle.join(' · ')} / Mac: ${group.backup.join(' · ')}`)]
@@ -2528,6 +2529,7 @@ function reviewSync(preview) {
     list.parentElement.open = false;
   }
   $('sync-folders').hidden = !preview.count;
+  $('sync-mac-newer-group').hidden = !(preview.macNewerPaths || []).length;
   const epubConflicts = preview.epubConflictPaths || [];
   const choices = $('sync-use-mac');
   choices.replaceChildren();
@@ -2558,7 +2560,7 @@ function reviewSync(preview) {
     item.append(el('div', `Archive · ${remove}`), el('div', `Keep · ${keep}`));
     return item;
   }));
-  $('apply-sync').hidden = !(removals.length || incomingFolders.length || statuses.length || archive.length || preview.toMac || preview.toKindle || preview.count || preview.conflicts || epubConflicts.length);
+  $('apply-sync').hidden = !(removals.length || incomingFolders.length || statuses.length || archive.length || preview.toMac || preview.toKindle || preview.count || preview.conflicts || epubConflicts.length || (preview.macNewerPaths || []).length);
   dialog.returnValue = 'cancel';
   return new Promise(resolve => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'apply'
