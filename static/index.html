@@ -11,6 +11,7 @@
       <button id="open-duplicate-archive" type="button">Duplicate archive</button>
       <button id="open-sync-history" type="button">Sync history</button>
       <button id="open-icloud-sync" type="button">iCloud Drive sync…</button>
+      <button id="open-apple-books" type="button">Add to Apple Books…</button>
       <button id="open-font-manager" type="button">Manage fonts…</button>
       <button id="open-library-health" type="button">Library health check</button>
       <button id="open-genre-cleanup" type="button">Clean up metadata…</button>
@@ -158,6 +159,7 @@
       <details class="backup-paths" open><summary id="sync-archive-count"></summary><ul id="sync-archive-paths" class="transfer-paths"></ul></details>
       <p class="hint">KoShelf checks that the copy you chose to keep is on the Kindle before archiving the extra EPUB.</p>
     </section>
+    <p id="sync-books-note" class="hint" hidden>Apple Books progress isn't included. To include it, give KoShelf Full Disk Access in System Settings → Privacy &amp; Security.</p>
     <section id="sync-conflicts" hidden>
       <details class="backup-paths"><summary id="sync-conflict-count"></summary><ul id="sync-conflict-paths" class="transfer-paths"></ul></details>
       <p id="sync-replacement-hint" class="hint">Choose which EPUBs should match your Mac. KoShelf keeps the previous Kindle version in its private recovery folder before replacing it.</p>
@@ -334,6 +336,21 @@
   <ul id="cleanup-errors" hidden></ul>
   <div id="cleanup-books" class="cleanup-list"></div>
   <form method="dialog" class="actions"><button id="cleanup-close" class="button">Close</button><button id="cleanup-apply" type="button" class="button primary" disabled>Apply selected</button></form>
+</dialog>
+<dialog id="apple-books-dialog" aria-labelledby="apple-books-heading">
+  <h2 id="apple-books-heading">Add to Apple Books</h2>
+  <p>KoShelf compares your Mac library with Apple Books by title and author. Books you choose are copied into Apple Books' iCloud Drive folder, and Books adds them to your library on your Mac, iPhone, and iPad. KoShelf never changes Apple Books' own data.</p>
+  <p id="apple-books-status" role="status"></p>
+  <section id="apple-books-access" class="duplicate-card" hidden>
+    <strong>KoShelf needs permission to read Apple Books' library</strong>
+    <p>In System Settings, open Privacy &amp; Security → Full Disk Access and turn on KoShelf. For the browser version, turn on the terminal app you start KoShelf from. Then quit and reopen KoShelf.</p>
+    <p class="hint">If KoShelf is already on, select it, click −, and add it again with +. macOS ties the permission to one build of KoShelf, so it stops working after an update.</p>
+    <div class="cleanup-rule-actions"><button id="apple-books-settings" type="button" class="button">Open Full Disk Access settings</button><button id="apple-books-retry" type="button" class="button">Check again</button></div>
+  </section>
+  <details id="apple-books-ambiguous" class="duplicate-card" hidden open><summary id="apple-books-ambiguous-heading"></summary><p class="hint">Apple Books has a book with the same title by a different author. Add it only if it's a different book.</p><div id="apple-books-ambiguous-list" class="cleanup-list"></div></details>
+  <details id="apple-books-missing" class="duplicate-card" hidden open><summary id="apple-books-missing-heading"></summary><div class="cleanup-list-actions"><p class="hint">Choose the books to add. Nothing is selected until you choose it.</p><button id="apple-books-select-all" type="button" class="button">Select all</button></div><div id="apple-books-missing-list" class="cleanup-list"></div></details>
+  <ul id="apple-books-errors" hidden></ul>
+  <form method="dialog" class="actions"><button id="apple-books-close" class="button">Close</button><button id="apple-books-add" type="button" class="button primary" disabled>Add to Apple Books</button></form>
 </dialog>
 <dialog id="split-dialog" aria-labelledby="split-heading">
   <h2 id="split-heading">Split omnibus</h2>

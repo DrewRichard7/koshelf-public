@@ -845,3 +845,24 @@ main{
   background: #f6ead2;
   color: #7a5520 !important;
 }
+
+#apple-books-dialog {
+  width: min(860px, 94vw);
+}
+
+#apple-books-dialog summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#apple-books-missing-list, #apple-books-ambiguous-list {
+  max-height: 22rem;
+  overflow: auto;
+  margin-top: 6px;
+}
+
+.books-progress {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6d6455;
+}

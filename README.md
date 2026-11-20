@@ -74,6 +74,13 @@ Review changes before syncing Mac and iCloud. The review shows copies, replaceme
 
 With both libraries available, **Sync libraries** reviews proposed changes in both directions. Review the transfer lists, choose whether matching books should follow Kindle folders, Mac folders, or both, and inspect differences between versions. When a Kindle file differs from the Mac file at the same path, KoShelf keeps the Kindle version in its private recovery folder (`sync-versions` in the state folder), not in your library. For EPUB conflicts you can choose to use the Mac version on the Kindle. Books you edited in KoShelf on the Mac are recognized and updated on the Kindle without asking. Sync skips the hidden files macOS writes on the Kindle's drive, such as `._` files and `.DS_Store`. If an earlier version left `._` files or `(backup …)` copies in your Mac library or iCloud Drive folder, use **Shelf actions → Clean up sync leftovers…**. It lists what it found and, after you confirm, moves those files to KoShelf's recovery folder. Backup copies whose original is missing stay where they are.
 
+### Apple Books
+
+On macOS, KoShelf can read Apple Books' library. It never changes Apple Books' own data. Apple Books features turn on the first time you open **Shelf actions → Add to Apple Books…**. Until then, KoShelf doesn't read Apple Books' data at all. To allow this, open **System Settings → Privacy & Security → Full Disk Access** and turn on KoShelf. For the browser version, turn on the terminal app you start it from. Then quit and reopen KoShelf.
+
+- **Progress.** Book cards show your Apple Books progress. During **Sync libraries**, when Apple Books is at least a percentage point further along than the Kindle, the Kindle opens at Apple Books' percentage. The position is approximate, because the two apps lay out pages differently. The Kindle keeps its highlights and notes, and sync history can undo the change. A book finished in Apple Books is marked finished on the Kindle.
+- **Add to Apple Books.** **Shelf actions → Add to Apple Books…** compares your Mac library with Apple Books by title and author, including co-authors and translators. It lists books that aren't in Apple Books, and books whose title matches a different author's. KoShelf copies the books you choose into Apple Books' iCloud Drive folder, without replacing anything. Until Books lists a copied book, it isn't offered again. Books then adds them to your library on your Mac, iPhone, and iPad. Books from Apple's Book Store count as already in Apple Books.
+
 **Find duplicates** helps you choose the copy to keep. KoShelf stores archived copies in `~/KoShelf Duplicate Archive`, outside the synced shelves. The next sync can apply an archive decision to the matching Kindle copy after verifying that the keeper is present. **Sync history** lists recorded EPUB actions and offers undo where applicable. Transfer totals can include non-EPUB files, such as companion data, while sync history lists EPUB actions.
 
 When you open an explicit folder with `--library`, **Back up library** copies into `~/KoShelf Library`. It preserves relative paths and empty folders, skips identical files, and saves changed same-path files under a content-based suffix. Keep the source connected through the result summary.
@@ -91,6 +98,8 @@ Use a folder dedicated to your books. The original backup workflow can copy comp
 ## Build and check
 
 On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.26.11 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
+
+Builds are signed with a certificate named `KoShelf Signing` when your keychain has one, and ad hoc otherwise. macOS ties Full Disk Access, which Apple Books features need, to the signature. With ad hoc signing, every build needs the permission granted again. To create the certificate, open Keychain Access, choose **Keychain Access → Certificate Assistant → Create a Certificate…**, enter the name `KoShelf Signing`, and choose **Self-Signed Root** and **Code Signing**. Set `KOSHELF_SIGNING_IDENTITY` to use another identity, and `KOSHELF_VERSION` to label a development build, such as `1.1.2-dev`.
 
 ```sh
 ./scripts/build-macos.sh

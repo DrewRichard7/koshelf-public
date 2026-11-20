@@ -49,7 +49,7 @@ Keep the warm paper palette, subtle grain, fixed-position library slider, and th
 ## Releasing
 
 1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `native/Info.plist`. Update the README for any changed behavior. In `CHANGELOG.md`, move **Unreleased** into a new version heading.
-2. Run `./scripts/package-macos.sh`, then `python3 -B scripts/check-service.py build/portable/KoShelf.app`. Mount the DMG and run the same check against the app inside it.
+2. Run `./scripts/package-macos.sh`, then `python3 -B scripts/check-service.py build/portable/KoShelf.app`. Mount the DMG and run the same check against the app inside it. Sign releases with the maintainer's `KoShelf Signing` certificate (the build prints `Signing with: KoShelf Signing`). Users then keep Full Disk Access across updates, and a release signed with another certificate makes them grant it again. For dev builds, set `KOSHELF_VERSION` instead of editing `Info.plist` afterward, because re-signing ad hoc discards the certificate signature.
 3. Stage the converter the way `scripts/build-kindle-converter.sh` does. Then run `govulncheck ./...` there for `GOARCH=arm64` and `GOARCH=amd64`.
 4. Check that the KoShelf you open for manual testing is the new build. Look at its version in **About KoShelf**.
 5. Before pushing, check tracked files and screenshots for local paths and personal details.
