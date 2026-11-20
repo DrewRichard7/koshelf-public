@@ -69,12 +69,15 @@ def session_url(port, secret):
 HANDOFF_LIFETIME = 60
 
 
+def handoff_signature(secret, port, expiry, nonce):
+    return hmac.digest(secret.encode('ascii'), f'KoShelf-open:{port}:{expiry}:{nonce}'.encode('ascii'), 'sha256').hex()
+
+
 def handoff_code(secret, port, now=None):
     """A single-use code that opens the session, valid for one minute."""
     expiry = int(now if now is not None else time.time()) + HANDOFF_LIFETIME
     nonce = secrets.token_hex(16)
-    signature = hmac.digest(secret.encode('ascii'), f'KoShelf-open:{port}:{expiry}:{nonce}'.encode('ascii'), 'sha256').hex()
-    return f'{expiry}.{nonce}.{signature}'
+    return f'{expiry}.{nonce}.{handoff_signature(secret, port, expiry, nonce)}'
 
 
 def redeem_handoff(secret, port, code, used, now=None):
@@ -86,36 +89,41 @@ def redeem_handoff(secret, port, code, used, now=None):
     if not match:
         return False
     expiry, nonce, signature = int(match[1]), match[2], match[3]
-    expected = hmac.digest(secret.encode('ascii'), f'KoShelf-open:{port}:{expiry}:{nonce}'.encode('ascii'), 'sha256').hex()
-    if (not hmac.compare_digest(signature, expected) or not now <= expiry <= now + HANDOFF_LIFETIME
+    if (not hmac.compare_digest(signature, handoff_signature(secret, port, expiry, nonce)) or not now <= expiry <= now + HANDOFF_LIFETIME
             or nonce in used):
         return False
     used[nonce] = expiry
     return True
 
 
-def connection_uid(client_port, server_port, tables=('/proc/net/tcp', '/proc/net/tcp6')):
-    """On Linux, the user that owns a loopback connection to this service, or None."""
-    for table in tables:
-        try:
-            with open(table, encoding='ascii') as stream:
-                rows = stream.read().splitlines()[1:]
-        except OSError:
-            continue
-        for row in rows:
-            fields = row.split()
-            if len(fields) < 8:
-                continue
+def proc_address(host, port):
+    """An IPv4 address and port as /proc/net/tcp writes them, such as 0100007F:1F90."""
+    import ipaddress
+    return f'{bytes(reversed(ipaddress.IPv4Address(host).packed)).hex().upper()}:{port:04X}'
+
+
+def connection_uid(client, server, table='/proc/net/tcp'):
+    """On Linux, the user that owns an established loopback connection to this service, or None.
+
+    The whole connection must match: the browser's address and port and the service's.
+    Matching ports alone would accept another user's socket bound to 127.0.0.2.
+    """
+    local, remote = proc_address(*client), proc_address(*server)
+    try:
+        with open(table, encoding='ascii') as stream:
+            rows = stream.read().splitlines()[1:]
+    except OSError:
+        return None
+    owners = set()
+    for row in rows:
+        fields = row.split()
+        # Columns: slot, local address, remote address, state, ..., uid.
+        if len(fields) >= 8 and fields[1] == local and fields[2] == remote and fields[3] == '01':
             try:
-                local_port = int(fields[1].rsplit(':', 1)[1], 16)
-                remote_port = int(fields[2].rsplit(':', 1)[1], 16)
-                uid = int(fields[7])
-            except (IndexError, ValueError):
-                continue
-            # The browser's side of the connection: its port, connected to ours.
-            if local_port == client_port and remote_port == server_port:
-                return uid
-    return None
+                owners.add(int(fields[7]))
+            except ValueError:
+                return None
+    return owners.pop() if len(owners) == 1 else None
 
 
 def open_browser(port, secret):

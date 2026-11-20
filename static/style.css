@@ -866,3 +866,29 @@ main{
   font-size: 11px;
   color: #6d6455;
 }
+
+.setting-row {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0 !important;
+  font-size: 13px !important;
+  cursor: pointer;
+}
+
+.setting-row input {
+  margin-top: 3px;
+  accent-color: var(--green);
+}
+
+.setting-row small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+#waiting-create {
+  margin: 6px auto 0;
+}

@@ -41,6 +41,7 @@ A service started without `KOSHELF_STATE_DIR` uses the real app data folder (`~/
 - **Filesystem.** Library paths go through `library_path`, which rejects symbolic links and paths that cross filesystems. Moves use `rename_exclusive` and never overwrite. Replacements keep verified recovery copies.
 - **Converter.** The Kindle converter runs under `sandbox-exec` (see `kindle_delivery.sandboxed`). Keep it without network access and with writes limited to its workspace. Linux has no sandbox yet. There it runs with a warning in the Send to Kindle dialog until Linux sandboxing (see `TODO.md`) is added.
 - **DRM.** KoShelf handles only DRM-free books. `test_drm.py` guards this.
+- **Opt-in access.** Reading or writing anything outside the library the user opened must be the user's choice: an action they start, or a switch in **Settings** (`SETTINGS_DEFAULTS` in `app.py`). Never add background access to new locations without a setting. Apple Books progress is off by default. KoShelf asks before creating `~/KoShelf Library`.
 
 ## Interface
 

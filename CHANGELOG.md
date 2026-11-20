@@ -4,6 +4,9 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **Settings for what KoShelf may read.** **Shelf actions → Settings…** turns automatic Kindle detection, background comparison with a connected Kindle, and Apple Books progress on or off. Apple Books progress is off until you turn it on; opening Add to Apple Books no longer turns it on.
+- **KoShelf asks before creating its library.** On first launch, a welcome screen offers **Create KoShelf Library** or choosing another folder.
+- **Security fixes.** On Linux, the browser link is accepted only from the exact connection your browser opened, so another user's socket on the same port can't take over the session. Adding a book to Apple Books no longer follows symbolic links, and its partial copy is never uploaded to iCloud. Send to Kindle on Linux needs **Run the converter without a sandbox** ticked before it converts. KoShelf no longer looks for Kindles under `/mnt` on Linux, which often holds network shares.
 - **Builds keep Full Disk Access across updates.** The build signs KoShelf with a stable `KoShelf Signing` certificate when the keychain has one, so macOS keeps the permission that Apple Books features need. Without the certificate, builds are signed ad hoc as before.
 - **Apple Books progress.** With Full Disk Access, KoShelf reads Apple Books' library without changing it. Book cards show Apple Books progress. **Sync libraries** moves the Kindle to Apple Books' position when Apple Books is further along, and marks books finished there as finished on the Kindle. The review shows these changes as Apple Books → Kindle cards, and sync history can undo them. Highlights and notes on the Kindle stay.
 - **Add to Apple Books.** A review lists Mac library books that aren't in Apple Books, and flags books whose title matches a different author's. Books you choose are copied into Apple Books' iCloud Drive folder, and Books adds them on all your devices.

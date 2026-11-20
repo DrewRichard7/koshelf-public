@@ -164,10 +164,11 @@ class Matcher:
         return {'progress': 1.0 if finished else latest['progress'], 'finished': finished}
 
 
-def add_to_books(source, rename, folder=None):
+def add_to_books(source, rename, opener, folder=None):
     """Copy an EPUB into Books' iCloud folder without replacing anything. Returns the new path.
 
-    `rename` must refuse to replace an existing path, like app.rename_exclusive.
+    `rename` must refuse to replace an existing path, like app.rename_exclusive, and
+    `opener` must refuse symbolic links and special files, like epub_safety.open_regular.
     """
     folder = folder or ICLOUD_BOOKS
     if not folder.is_dir():
@@ -178,10 +179,11 @@ def add_to_books(source, rename, folder=None):
         destination = folder / name
         if os.path.lexists(destination):
             continue
-        with tempfile.NamedTemporaryFile(dir=folder, prefix='.koshelf-', suffix='.tmp', delete=False) as output:
+        # iCloud Drive never uploads names ending in .nosync, so a partial copy stays local.
+        with tempfile.NamedTemporaryFile(dir=folder, prefix='.koshelf-', suffix='.nosync', delete=False) as output:
             temporary = Path(output.name)
             try:
-                with source.open('rb') as stream:
+                with opener(source) as stream:
                     shutil.copyfileobj(stream, output)
                 output.flush()
                 os.fsync(output.fileno())

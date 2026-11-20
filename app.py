@@ -267,13 +267,65 @@ def cached_cover(path, info):
     return image
 
 
+SETTINGS_DEFAULTS = {
+    'kindleDetection': True,     # Look for a connected Kindle under /Volumes or /media.
+    'kindleAutoCompare': True,   # Compare a detected Kindle with the Mac in the background.
+    'appleBooksProgress': False,  # Read Apple Books progress for the shelf and Kindle sync.
+}
+SETTINGS = {'path': None, 'values': None}
+
+
+def settings():
+    """The user's privacy choices, from settings.json in the state folder."""
+    path = JOURNAL.with_name('settings.json')
+    if SETTINGS['path'] != path:
+        try:
+            with open_state_text(path) as stream:
+                stored = json.load(stream)
+        except (OSError, ValueError):
+            stored = {}
+        stored = stored if isinstance(stored, dict) else {}
+        SETTINGS.update(path=path, values={key: stored[key] if isinstance(stored.get(key), bool) else default
+                                           for key, default in SETTINGS_DEFAULTS.items()})
+    return dict(SETTINGS['values'])
+
+
+def save_settings(changes):
+    if (not isinstance(changes, dict) or not changes
+            or any(key not in SETTINGS_DEFAULTS or not isinstance(value, bool) for key, value in changes.items())):
+        raise ValueError('Choose a setting to change.')
+    values = {**settings(), **changes}
+    path = JOURNAL.with_name('settings.json')
+    private_state_directory(path.parent)
+    pending = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, prefix='.settings-',
+                                         delete=False) as output:
+            pending = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(values, output, sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(pending, path)
+        pending = None
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+    SETTINGS.update(path=path, values=values)
+    return values
+
+
 def mounted_volumes():
-    bases = [Path('/Volumes')] if os.sys.platform == 'darwin' else [Path('/media') / os.environ.get('USER', ''), Path('/run/media') / os.environ.get('USER', ''), Path('/mnt')]
+    # Linux desktops mount removable drives under /media or /run/media. /mnt often
+    # holds network shares, so KoShelf doesn't look there.
+    bases = [Path('/Volumes')] if os.sys.platform == 'darwin' else [Path('/media') / os.environ.get('USER', ''), Path('/run/media') / os.environ.get('USER', '')]
     return sorted({volume for base in bases if base.is_dir() for volume in base.iterdir()
                    if volume.is_dir() and not volume.is_symlink()})
 
 
 def discover():
+    if not settings()['kindleDetection']:
+        return []
     return [str(volume / 'books') for volume in mounted_volumes()
             if (volume / 'books').is_dir() and not (volume / 'books').is_symlink()]
 
@@ -334,7 +386,9 @@ def sync_connection():
         local = mac_library()
         if local.is_symlink():
             raise ValueError('The Mac library must not be a symbolic link.')
-        local.mkdir(exist_ok=True)
+        if not local.is_dir():
+            # The user creates the library from the welcome screen; KoShelf doesn't make it unasked.
+            return {'connected': False, 'root': None, 'needsLibrary': str(local)}
         select_library(local); connected = True
     elif not connected and AUTO_CONNECT:
         candidates = [p for p in kindle_candidates() if not EJECTED_VOLUME or Path(p).parent != EJECTED_VOLUME]
@@ -592,20 +646,18 @@ APPLE_BOOKS_ENABLED = False  # Turned on by main(), so tests never read the real
 APPLE_BOOKS = {'revision': None, 'matcher': None}
 
 
-def apple_books_opted_in():
-    return JOURNAL.with_name('apple-books-enabled').exists()
-
-
-def apple_books_matcher():
+def apple_books_matcher(requested=False):
     """Apple Books' library as (state, matcher). State is ok, off, needs-access, or unavailable.
 
-    KoShelf reads Apple Books only after the user has opened Add to Apple Books, so
-    people who don't use it never see a macOS privacy prompt for Books' data.
+    The shelf and sync read Apple Books only when the user has turned on Apple Books
+    progress. `requested` is for a review the user opened, which reads it once.
     """
-    if not APPLE_BOOKS_ENABLED or not apple_books.available():
+    if not APPLE_BOOKS_ENABLED:
         return 'unavailable', None
-    if not apple_books_opted_in():
+    if not requested and not settings()['appleBooksProgress']:
         return 'off', None
+    if not apple_books.available():
+        return 'unavailable', None
     try:
         revision = apple_books.database_revision()
         if revision is None:
@@ -773,7 +825,8 @@ def visible_folders(base, names, device):
 def scan():
     connection = sync_connection()
     if not connection['connected']:
-        return dict(connected=False, root=str(ROOT) if ROOT else None, books=[], folders=[], candidates=discover())
+        return dict(connected=False, root=str(ROOT) if ROOT else None, books=[], folders=[], candidates=discover(),
+                    needsLibrary=connection.get('needsLibrary'))
     books, folders, seen = [], [], set()
     load_metadata_cache()
     status_edits = reading_status_queue() if ROOT == mac_library().resolve() else {}
@@ -987,9 +1040,7 @@ def apple_books_additions(root):
 def apple_books_preview():
     """Mac library books that are missing from Apple Books, or only match by title."""
     root = cleanup_root()
-    private_state_directory(JOURNAL.parent, create=True)
-    JOURNAL.with_name('apple-books-enabled').touch()  # Opening this review turns on Apple Books features.
-    state, matcher = apple_books_matcher()
+    state, matcher = apple_books_matcher(requested=True)
     if matcher is None:
         return {'state': state}
     pending = apple_books_additions(root)
@@ -1040,7 +1091,7 @@ def add_to_apple_books(body):
             source = library_path(relative)
             if source.is_symlink() or not source.is_file():
                 raise ValueError('The EPUB is no longer in your library.')
-            destination = apple_books.add_to_books(source, rename_exclusive)
+            destination = apple_books.add_to_books(source, rename_exclusive, open_regular)
             journal({'operation': 'add-to-apple-books', 'library': str(ROOT), 'source': relative,
                      'destination': str(destination), 'status': 'completed'})
             result['added'] += 1
@@ -3476,7 +3527,7 @@ def deliver_to_kindle(body):
 
         with tempfile.TemporaryDirectory(prefix='koshelf-kindle-') as temporary:
             converted = Path(temporary) / 'book.azw3'
-            kindle_delivery.convert(source, converted, executable)
+            kindle_delivery.convert(source, converted, executable, allow_unsandboxed=body.get('allowUnsandboxed') is True)
             with LOCK:
                 if library_path(body.get('path')) != source or kindle_delivery.source_revision(source) != revision:
                     raise ValueError('The source EPUB changed during conversion. Try again.')
@@ -3590,7 +3641,7 @@ class Handler(BaseHTTPRequestHandler):
             # only a connection owned by this user may redeem it.
             now = time.time()
             code = urllib.parse.parse_qs(url.query).get('code', [''])[0]
-            owner = local_session.connection_uid(self.client_address[1], self.server.server_port)
+            owner = local_session.connection_uid(self.client_address[:2], self.server.server_address[:2])
             with self.server.handoff_lock:
                 valid = owner == os.getuid() and local_session.redeem_handoff(
                     self.server.session_secret, self.server.server_port, code, self.server.handoffs, now=now)
@@ -3661,7 +3712,8 @@ class Handler(BaseHTTPRequestHandler):
                     if LOCAL_FIRST:
                         kindle = kindle_library()
                         state['kindle'] = str(kindle) if kindle else None
-                        documents = kindle.parent / 'documents' if kindle else kindle_documents()
+                        documents = (kindle.parent / 'documents' if kindle
+                                     else kindle_documents() if settings()['kindleDetection'] else None)
                         state['usbKindle'] = usb_kindle_status(documents)
                 finally:
                     LOCK.release()
@@ -3685,6 +3737,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({'error': str(exc)}, status=400)
         if url.path == '/api/progress':
             return self.send(dict(PROGRESS))
+        if url.path == '/api/settings':
+            return self.send(settings())
         if url.path == '/api/description':
             # The shelf list omits descriptions; the detail view reads one on demand.
             params = urllib.parse.parse_qs(url.query)
@@ -3797,7 +3851,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send(import_epub(urllib.parse.parse_qs(url.query, keep_blank_values=True), upload, size))
             except (OSError, ValueError, KeyError) as exc:
                 return self.send({'error': str(exc)}, status=400)
-        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/sync-leftovers', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup', '/api/apple-books-preview', '/api/apple-books-add', '/api/full-disk-access'} or self.headers.get('Content-Type') != 'application/json':
+        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/sync-leftovers', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup', '/api/apple-books-preview', '/api/apple-books-add', '/api/full-disk-access', '/api/create-mac-library', '/api/settings'} or self.headers.get('Content-Type') != 'application/json':
             return self.send({'error': 'Unsupported request'}, status=400)
         try:
             limit = 512 * 1024 if self.path in {'/api/sync', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-sync', '/api/apple-books-add'} else 8192
@@ -3810,6 +3864,15 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/api/library':
                     select_library(body['path'])
                     return self.send(library_snapshot())
+                if self.path == '/api/create-mac-library':
+                    local = mac_library()
+                    if not LOCAL_FIRST or local.is_symlink():
+                        raise ValueError('KoShelf can only create its own Mac library.')
+                    local.mkdir(exist_ok=True)
+                    select_library(local)
+                    return self.send(library_snapshot())
+                if self.path == '/api/settings':
+                    return self.send(save_settings(body.get('settings')))
                 if str(ROOT) != body.get('library'):
                     raise ValueError('Library changed. Refresh before making changes.')
                 if self.path == '/api/kindle-setup':
