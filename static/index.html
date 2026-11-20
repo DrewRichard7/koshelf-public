@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>KoShelf</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body class="waiting"><section id="waiting" class="waiting-screen" aria-label="Library connection"><a class="waiting-brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt="">KoShelf</a><div class="cloud-scene" aria-hidden="true"><div class="cloud cloud-back"></div><div class="cloud cloud-front"></div><img class="floating-book" src="/koshelf-icon.png" alt=""><span class="spark spark-one">✧</span><span class="spark spark-two">·</span><span class="spark spark-three">✧</span></div><div class="waiting-copy"><div class="eyebrow">A LITTLE ROOM FOR YOUR BOOKS</div><h1 id="waiting-title">Waiting for your library</h1><p id="waiting-message">Plug in your Kindle. We’ll take it from here.</p><div class="connection-pulse"><i></i><span id="waiting-status">Looking for your Kindle</span></div><button id="waiting-choose" class="quiet">Or choose a folder on this computer ↗</button></div><div class="waiting-bottom">Your next chapter is just a connection away.</div></section><aside class="sidebar"><a class="brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt=""><span>KoShelf<small>A little room for your books.</small></span></a><div class="section-label">YOUR LIBRARY</div><button id="all" class="nav active"><i class="shelf-icon" aria-hidden="true"></i> All books <span id="count">0</span></button><div class="folder-header"><div class="section-label folder-label">FOLDERS</div><button id="new-folder" class="folder-add" title="Create a folder" aria-label="New folder" disabled>＋</button></div><nav id="folders" aria-label="Library folders"></nav><div class="sidebar-bottom"><div id="status"><i></i> No library connected</div><div id="library-switcher" role="group" aria-label="Library view" hidden><button id="switch-mac" class="button">Mac library</button><button id="switch-kindle" class="button">Kindle library</button></div><p id="kindle-status" role="status" hidden></p><button id="eject" class="button eject" hidden>⏏ &nbsp; Eject Kindle</button><button id="change" class="quiet">Choose library folder</button><p>Drag a book onto a folder to move it.<br>KOReader companion folders move too.</p></div></aside>
+<body class="waiting"><section id="waiting" class="waiting-screen" aria-label="Library connection"><a class="waiting-brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt="">KoShelf</a><div class="cloud-scene" aria-hidden="true"><div class="cloud cloud-back"></div><div class="cloud cloud-front"></div><img class="floating-book" src="/koshelf-icon.png" alt=""><span class="spark spark-one">✧</span><span class="spark spark-two">·</span><span class="spark spark-three">✧</span></div><div class="waiting-copy"><div class="eyebrow">A LITTLE ROOM FOR YOUR BOOKS</div><h1 id="waiting-title">Waiting for your library</h1><p id="waiting-message">Plug in your Kindle. We’ll take it from here.</p><div class="connection-pulse"><i></i><span id="waiting-status">Looking for your Kindle</span></div><button id="waiting-create" class="button primary" hidden>Create KoShelf Library</button><button id="waiting-choose" class="quiet">Or choose a folder on this computer ↗</button></div><div class="waiting-bottom">Your next chapter is just a connection away.</div></section><aside class="sidebar"><a class="brand" href="/"><img class="brand-icon" src="/koshelf-icon.png" alt=""><span>KoShelf<small>A little room for your books.</small></span></a><div class="section-label">YOUR LIBRARY</div><button id="all" class="nav active"><i class="shelf-icon" aria-hidden="true"></i> All books <span id="count">0</span></button><div class="folder-header"><div class="section-label folder-label">FOLDERS</div><button id="new-folder" class="folder-add" title="Create a folder" aria-label="New folder" disabled>＋</button></div><nav id="folders" aria-label="Library folders"></nav><div class="sidebar-bottom"><div id="status"><i></i> No library connected</div><div id="library-switcher" role="group" aria-label="Library view" hidden><button id="switch-mac" class="button">Mac library</button><button id="switch-kindle" class="button">Kindle library</button></div><p id="kindle-status" role="status" hidden></p><button id="eject" class="button eject" hidden>⏏ &nbsp; Eject Kindle</button><button id="change" class="quiet">Choose library folder</button><p>Drag a book onto a folder to move it.<br>KOReader companion folders move too.</p></div></aside>
 <main><header><div class="eyebrow" id="library-label">YOUR LIBRARY</div><div class="title-row"><h1 id="heading">Your bookshelf</h1><div class="header-actions">
   <button id="backup" class="button" title="Copy the library to ~/KoShelf Library">Back up library</button>
   <details id="shelf-actions">
@@ -15,6 +15,7 @@
       <button id="open-font-manager" type="button">Manage fonts…</button>
       <button id="open-library-health" type="button">Library health check</button>
       <button id="open-genre-cleanup" type="button">Clean up metadata…</button>
+      <button id="open-settings" type="button">Settings…</button>
       <button id="open-sync-leftovers" type="button">Clean up sync leftovers…</button>
       <button id="remove-folder" type="button" hidden>Remove folder…</button>
     </div>
@@ -187,6 +188,7 @@
   <h2 id="kindle-delivery-heading">Send to Kindle over USB</h2>
   <p>KoShelf converts your EPUBs on this computer into AZW3 copies for the Kindle reader. Your original EPUBs stay in your library.</p>
   <p id="kindle-delivery-warning" class="delivery-warning" role="note" hidden>The converter runs without a sandbox on this system. KoShelf can only sandbox it on macOS so far; Linux sandboxing is on the roadmap. The converter can read and write your files and use the network while it runs, so only convert EPUBs you trust.</p>
+  <label id="kindle-delivery-consent" class="setting-row" hidden><input id="kindle-delivery-unsandboxed" type="checkbox"><span>Run the converter without a sandbox<small>Required on this system for each conversion.</small></span></label>
   <ul id="kindle-delivery-books" class="transfer-paths"></ul>
   <p id="kindle-delivery-status" role="status"></p>
   <progress id="kindle-delivery-progress" aria-label="Books processed" hidden></progress>
@@ -340,6 +342,7 @@
 <dialog id="apple-books-dialog" aria-labelledby="apple-books-heading">
   <h2 id="apple-books-heading">Add to Apple Books</h2>
   <p>KoShelf compares your Mac library with Apple Books by title and author. Books you choose are copied into Apple Books' iCloud Drive folder, and Books adds them to your library on your Mac, iPhone, and iPad. KoShelf never changes Apple Books' own data.</p>
+  <label class="setting-row"><input id="apple-books-progress" type="checkbox"><span>Use Apple Books progress<small>Show Apple Books progress on book cards, and let Sync libraries move the Kindle to it. Off until you turn it on. Adding books below doesn't need it.</small></span></label>
   <p id="apple-books-status" role="status"></p>
   <section id="apple-books-access" class="duplicate-card" hidden>
     <strong>KoShelf needs permission to read Apple Books' library</strong>
@@ -351,6 +354,15 @@
   <details id="apple-books-missing" class="duplicate-card" hidden open><summary id="apple-books-missing-heading"></summary><div class="cleanup-list-actions"><p class="hint">Choose the books to add. Nothing is selected until you choose it.</p><button id="apple-books-select-all" type="button" class="button">Select all</button></div><div id="apple-books-missing-list" class="cleanup-list"></div></details>
   <ul id="apple-books-errors" hidden></ul>
   <form method="dialog" class="actions"><button id="apple-books-close" class="button">Close</button><button id="apple-books-add" type="button" class="button primary" disabled>Add to Apple Books</button></form>
+</dialog>
+<dialog id="settings-dialog" aria-labelledby="settings-heading">
+  <h2 id="settings-heading">Settings</h2>
+  <p>Choose what KoShelf may read on this computer besides the library you open. Changes take effect right away.</p>
+  <label class="setting-row"><input type="checkbox" data-setting="kindleDetection"><span>Look for a connected Kindle<small>Check removable drives for a Kindle with KOReader. When this is off, open a Kindle with Choose library folder.</small></span></label>
+  <label class="setting-row"><input type="checkbox" data-setting="kindleAutoCompare"><span>Check for changes automatically<small>While a Kindle is connected, compare it with your Mac library in the background and read its books' details, so KoShelf can show when a sync is available. When this is off, KoShelf compares only when you choose Sync libraries.</small></span></label>
+  <label class="setting-row"><input type="checkbox" data-setting="appleBooksProgress"><span>Use Apple Books progress<small>Read Apple Books' reading progress for book cards and Sync libraries. Needs Full Disk Access. KoShelf never changes Apple Books.</small></span></label>
+  <p id="settings-status" role="status"></p>
+  <form method="dialog" class="actions"><button class="button">Done</button></form>
 </dialog>
 <dialog id="split-dialog" aria-labelledby="split-heading">
   <h2 id="split-heading">Split omnibus</h2>

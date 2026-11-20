@@ -175,13 +175,15 @@ def sandbox_available():
     return os.path.exists(SANDBOX_EXEC)
 
 
-def sandboxed(executable, workspace):
+def sandboxed(executable, workspace, allow_unsandboxed=False):
     """Run the converter without network access or writes outside its workspace.
 
     The converter parses untrusted EPUBs, so on macOS it may read only system
     files, its own binary, and the private workspace that holds the checked copy.
     """
     if not sandbox_available():
+        if not allow_unsandboxed:
+            raise ValueError('This system has no sandbox for the converter. Confirm in Send to Kindle to run it anyway.')
         print('KoShelf: running the Kindle converter without a sandbox, which this system does not provide yet.',
               file=sys.stderr, flush=True)
         return [executable]
@@ -261,7 +263,7 @@ def run_converter(command, *, stderr, cwd, env):
             process.wait()
 
 
-def convert(source, output, executable):
+def convert(source, output, executable, allow_unsandboxed=False):
     # The converter must read the exact bytes we checked even if the source
     # is replaced by another application or an iCloud download in the meantime.
     with tempfile.TemporaryDirectory(prefix='input-', dir=output.parent) as directory:
@@ -275,7 +277,7 @@ def convert(source, output, executable):
                 target.write(chunk)
         check_epub(staged)
         with tempfile.TemporaryFile(dir=directory) as errors:
-            returncode = run_converter([*sandboxed(executable, output.parent), str(staged), str(output)],
+            returncode = run_converter([*sandboxed(executable, output.parent, allow_unsandboxed), str(staged), str(output)],
                                        stderr=errors, cwd=directory,
                                        env={'HOME': directory, 'TMPDIR': directory, 'PATH': '/usr/bin:/bin',
                                             'GOMEMLIMIT': '384MiB', 'GOTRACEBACK': 'none'})

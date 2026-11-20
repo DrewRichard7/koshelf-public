@@ -76,9 +76,9 @@ With both libraries available, **Sync libraries** reviews proposed changes in bo
 
 ### Apple Books
 
-On macOS, KoShelf can read Apple Books' library. It never changes Apple Books' own data. Apple Books features turn on the first time you open **Shelf actions → Add to Apple Books…**. Until then, KoShelf doesn't read Apple Books' data at all. To allow this, open **System Settings → Privacy & Security → Full Disk Access** and turn on KoShelf. For the browser version, turn on the terminal app you start it from. Then quit and reopen KoShelf.
+On macOS, KoShelf can read Apple Books' library. It never changes Apple Books' own data. KoShelf reads it only when you open **Shelf actions → Add to Apple Books…**, or when you turn on **Use Apple Books progress** in that dialog or in **Settings**. That switch is off until you turn it on. To allow this, open **System Settings → Privacy & Security → Full Disk Access** and turn on KoShelf. For the browser version, turn on the terminal app you start it from. Then quit and reopen KoShelf.
 
-- **Progress.** Book cards show your Apple Books progress. During **Sync libraries**, when Apple Books is at least a percentage point further along than the Kindle, the Kindle opens at Apple Books' percentage. The position is approximate, because the two apps lay out pages differently. The Kindle keeps its highlights and notes, and sync history can undo the change. A book finished in Apple Books is marked finished on the Kindle.
+- **Progress (with Use Apple Books progress on).** Book cards show your Apple Books progress. During **Sync libraries**, when Apple Books is at least a percentage point further along than the Kindle, the Kindle opens at Apple Books' percentage. The position is approximate, because the two apps lay out pages differently. The Kindle keeps its highlights and notes, and sync history can undo the change. A book finished in Apple Books is marked finished on the Kindle.
 - **Add to Apple Books.** **Shelf actions → Add to Apple Books…** compares your Mac library with Apple Books by title and author, including co-authors and translators. It lists books that aren't in Apple Books, and books whose title matches a different author's. KoShelf copies the books you choose into Apple Books' iCloud Drive folder, without replacing anything. Until Books lists a copied book, it isn't offered again. Books then adds them to your library on your Mac, iPhone, and iPad. Books from Apple's Book Store count as already in Apple Books.
 
 **Find duplicates** helps you choose the copy to keep. KoShelf stores archived copies in `~/KoShelf Duplicate Archive`, outside the synced shelves. The next sync can apply an archive decision to the matching Kindle copy after verifying that the keeper is present. **Sync history** lists recorded EPUB actions and offers undo where applicable. Transfer totals can include non-EPUB files, such as companion data, while sync history lists EPUB actions.
@@ -89,7 +89,14 @@ KoShelf stores its data under `~/Library/Application Support/KoShelf/` on macOS,
 
 ## Privacy and security
 
-KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. Linux has no sandbox for it yet. If you build the converter on Linux, **Send to Kindle** warns that it runs with your normal permissions, so convert only EPUBs you trust.
+KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. Linux has no sandbox for it yet. If you build the converter on Linux, **Send to Kindle** converts only after you tick **Run the converter without a sandbox**, each time, so convert only EPUBs you trust.
+
+KoShelf reads nothing outside the library you open unless you choose it. **Shelf actions → Settings…** controls three things:
+- **Look for a connected Kindle:** checks removable drives for a Kindle with KOReader. On by default. Turn it off and open a Kindle with **Choose library folder**.
+- **Check for changes automatically:** while a Kindle is connected, compares it with your Mac library in the background so KoShelf can show when a sync is available. On by default.
+- **Use Apple Books progress:** off by default.
+
+On first launch, KoShelf asks before creating `~/KoShelf Library`.
 
 On macOS, the launcher hands your session to the browser through a private file. On Linux, Snap browsers can't read that file, so the launcher opens a single-use link instead. The link stops working after one minute or once it has been used. KoShelf accepts it only from a browser running under your user account. iCloud Drive sync is optional and uses the folder you select.
 

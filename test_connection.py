@@ -30,10 +30,26 @@ class ConnectionTests(unittest.TestCase):
         kindle.mkdir(parents=True)
         local = self.root/'Mac library'
         with patch.object(app, 'LOCAL_FIRST', True), patch.object(app, 'mac_library', return_value=local), patch.object(app, 'kindle_candidates', return_value=[str(kindle)]):
+            # KoShelf asks before creating its Mac library.
+            self.assertEqual(app.sync_connection(), {'connected': False, 'root': None, 'needsLibrary': str(local)})
+            self.assertFalse(local.exists())
+            local.mkdir()
             self.assertEqual(app.sync_connection()['root'], str(local))
-            self.assertTrue(local.is_dir())
             self.assertEqual(app.kindle_library(), kindle)
             self.assertEqual(app.sync_connection()['root'], str(local))
+
+    def test_kindle_detection_can_be_turned_off(self):
+        volume = self.root / 'Kindle'
+        (volume / 'books').mkdir(parents=True)
+        with tempfile.TemporaryDirectory() as state, patch.object(app, 'JOURNAL', Path(state) / 'moves.jsonl'), \
+                patch.object(app, 'mounted_volumes', return_value=[volume]):
+            self.assertEqual(app.discover(), [str(volume / 'books')])
+            app.save_settings({'kindleDetection': False})
+            with patch.object(app, 'mounted_volumes', side_effect=AssertionError('looked for a Kindle')):
+                self.assertEqual(app.discover(), [])
+            self.assertEqual(oct((Path(state) / 'settings.json').stat().st_mode & 0o777), '0o600')
+            with self.assertRaises(ValueError):
+                app.save_settings({'kindleDetection': 'yes'})
 
     def test_stock_kindle_delivery_is_independent_of_koreader_sync(self):
         volume = self.root / 'Kindle'

@@ -47,16 +47,34 @@ class HandoffTests(unittest.TestCase):
 
 
 class ConnectionOwnerTests(unittest.TestCase):
-    def test_owner_is_read_from_the_browser_side_of_the_connection(self):
+    def table(self, *rows):
         with tempfile.NamedTemporaryFile('w', delete=False) as table:
-            table.write('  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n'
-                        '   0: 0100007F:1F90 0100007F:C350 01 00000000:00000000 00:00000000 00000000     0        0 1\n'
-                        '   1: 0100007F:C350 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 2\n')
+            table.write('  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n')
+            for index, (local, remote, state, uid) in enumerate(rows):
+                table.write(f'   {index}: {local} {remote} {state} 00000000:00000000 00:00000000 00000000  {uid}        0 {index}\n')
         self.addCleanup(os.unlink, table.name)
-        # Browser port 0xC350 (50000) connected to service port 0x1F90 (8080).
-        self.assertEqual(local_session.connection_uid(50000, 8080, tables=(table.name,)), 1000)
-        self.assertIsNone(local_session.connection_uid(50001, 8080, tables=(table.name,)))
-        self.assertIsNone(local_session.connection_uid(50000, 8080, tables=('/nonexistent',)))
+        return table.name
+
+    def test_owner_is_read_from_the_exact_established_connection(self):
+        browser, service = ('127.0.0.1', 50000), ('127.0.0.1', 8080)
+        self.assertEqual(local_session.proc_address(*browser), '0100007F:C350')
+        table = self.table(('0100007F:1F90', '0100007F:C350', '01', 0),    # the service's side
+                           ('0100007F:C350', '0100007F:1F90', '01', 1000))  # the browser's side
+        self.assertEqual(local_session.connection_uid(browser, service, table), 1000)
+        self.assertIsNone(local_session.connection_uid(('127.0.0.1', 50001), service, table))
+        self.assertIsNone(local_session.connection_uid(browser, service, '/nonexistent'))
+
+    def test_another_users_socket_on_the_same_port_is_not_accepted(self):
+        browser, service = ('127.0.0.2', 50000), ('127.0.0.1', 8080)
+        # The victim's browser uses 127.0.0.1:50000; the attacker binds 127.0.0.2:50000.
+        table = self.table(('0100007F:C350', '0100007F:1F90', '01', 1000),
+                           ('0200007F:C350', '0100007F:1F90', '01', 2000))
+        self.assertEqual(local_session.connection_uid(browser, service, table), 2000)
+        self.assertEqual(local_session.connection_uid(('127.0.0.1', 50000), service, table), 1000)
+
+    def test_connections_that_are_not_established_are_ignored(self):
+        table = self.table(('0100007F:C350', '0100007F:1F90', '06', 1000))  # TIME_WAIT
+        self.assertIsNone(local_session.connection_uid(('127.0.0.1', 50000), ('127.0.0.1', 8080), table))
 
 
 class OpenLinkTests(unittest.TestCase):
@@ -128,7 +146,9 @@ class ConverterSandboxTests(unittest.TestCase):
     def test_converter_runs_unsandboxed_only_where_no_sandbox_exists(self):
         with patch.object(kindle_delivery, 'SANDBOX_EXEC', '/nonexistent/sandbox-exec'):
             self.assertFalse(kindle_delivery.sandbox_available())
-            self.assertEqual(kindle_delivery.sandboxed('/converter', '/work'), ['/converter'])
+            with self.assertRaisesRegex(ValueError, 'no sandbox'):
+                kindle_delivery.sandboxed('/converter', '/work')
+            self.assertEqual(kindle_delivery.sandboxed('/converter', '/work', allow_unsandboxed=True), ['/converter'])
 
 
 if __name__ == '__main__':

@@ -10,6 +10,8 @@ const sessionKey = (() => {
   }
 })();
 let sessionExpired = !sessionKey;
+// Privacy choices from the service; these defaults match it until they load.
+let appSettings = {kindleDetection: true, kindleAutoCompare: true, appleBooksProgress: false};
 
 function showSessionPrompt() {
   document.body.classList.add('waiting');
@@ -175,7 +177,7 @@ function renderConnection() {
   $('backup').disabled=busy||loading||!library.connected||(workflow==='send'&&!library.books.length);
   $('kindle-status').hidden=!local;
   $('kindle-status').textContent=device.syncError?'Could not compare libraries. '+device.syncError:
-    device.kindle?(device.syncNeeded?'KOReader connected · sync available':!comparison?'KOReader connected · checking for changes…':'KOReader connected · Libraries are up to date'):
+    device.kindle?(!appSettings.kindleAutoCompare&&!comparison?'KOReader connected':device.syncNeeded?'KOReader connected · sync available':!comparison?'KOReader connected · checking for changes…':'KOReader connected · Libraries are up to date'):
     workflow==='send'?'Kindle reader connected · USB delivery':
     workflow==='setup'?'KOReader detected · shelf setup available':
     ejected?'Kindle safely ejected':'Connect your Kindle over USB';
@@ -192,7 +194,7 @@ async function checkConnection() {
   }
   if(state.kindle!==device.kindle){
     comparison=null;comparedAt=0;
-    if(state.kindle){
+    if(state.kindle&&appSettings.kindleAutoCompare){
       const warmup=shelfRequest('/api/warm-kindle').catch(()=>{});
       kindleWarmup=warmup;
       void warmup.finally(()=>{if(kindleWarmup===warmup)kindleWarmup=null;});
@@ -201,7 +203,7 @@ async function checkConnection() {
   device={...state,...comparison};
   if(device.kindle||device.usbKindle)ejected=false;
   renderConnection();
-  if(state.kindle&&!kindleWarmup)void compareLibraries(state.kindle);
+  if(state.kindle&&!kindleWarmup&&appSettings.kindleAutoCompare)void compareLibraries(state.kindle);
   return state;
 }
 async function compareLibraries(kindle, force=false) {
@@ -537,9 +539,13 @@ function loadStorage(shelf) {
 function render() {
   document.body.classList.toggle('waiting',!library.connected);
   renderConnection();
-  $('waiting-title').textContent=ejected?'Safe travels, Kindle.':'Waiting for your library';
-  $('waiting-message').textContent=ejected?'Your Kindle has been safely ejected. You can unplug it now.':'Plug in your Kindle. We’ll take it from here.';
-  $('waiting-status').textContent=ejected?'Safely ejected':'Looking for your Kindle';
+  const welcome=!library.connected&&!ejected&&library.needsLibrary;
+  $('waiting-title').textContent=ejected?'Safe travels, Kindle.':welcome?'Welcome to KoShelf':'Waiting for your library';
+  $('waiting-message').textContent=ejected?'Your Kindle has been safely ejected. You can unplug it now.':
+    welcome?'KoShelf keeps your books in a KoShelf Library folder in your home folder. Create it to get started, or choose another folder.':
+    'Plug in your Kindle. We’ll take it from here.';
+  $('waiting-status').textContent=ejected?'Safely ejected':welcome?'No library yet':'Looking for your Kindle';
+  $('waiting-create').hidden=!welcome;
   document.body.classList.toggle('ejected',ejected);
   $('remove-folder').hidden=!library.connected||!folder;
   $('remove-folder').disabled=busy||loading;
@@ -1857,10 +1863,23 @@ $('open-apple-books').onclick = () => {
   $('shelf-actions').open = false;
   appleBooksSession = {root: library.root, pending: false, preview: null};
   $('apple-books-errors').hidden = true;
+  $('apple-books-progress').checked = appSettings.appleBooksProgress;
   appleBooksDialog.showModal();
   reviewAppleBooks();
 };
 $('apple-books-retry').onclick = () => reviewAppleBooks();
+$('apple-books-progress').onchange = async () => {
+  const input = $('apple-books-progress');
+  input.disabled = true;
+  try {
+    await saveSetting('appleBooksProgress', input.checked);
+  } catch (error) {
+    input.checked = !input.checked;
+    $('apple-books-status').textContent = error.message;
+  } finally {
+    input.disabled = false;
+  }
+};
 $('apple-books-settings').onclick = () => mutation('/api/full-disk-access', {}, {updateStorage: false}).catch(error => {
   $('apple-books-status').textContent = error.message;
 });
@@ -2059,7 +2078,7 @@ function readingStatusEditor(book) {
         update();
         note.textContent = result.readingStatusPending ? 'Pending Kindle sync' : 'Saved to Kindle';
         render();
-        if (device.kindle) void compareLibraries(device.kindle, true);
+        if (device.kindle && appSettings.kindleAutoCompare) void compareLibraries(device.kindle, true);
       } catch (error) {
         note.textContent = error.message;
       } finally {
@@ -2191,6 +2210,42 @@ setInterval(async()=>{
   finally {polling=false;}
 },750);
 $('waiting-choose').onclick=choose;
+$('waiting-create').onclick=async()=>{
+  const button=$('waiting-create');button.disabled=true;
+  try{
+    const r=await shelfRequest('/api/create-mac-library',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data=await r.json();if(!r.ok)throw Error(data.error||'Could not create the library.');
+    library=data;folder=null;render();
+  }catch(e){$('waiting-message').textContent=e.message;}
+  finally{button.disabled=false;}
+};
+async function loadSettings(){
+  try{const r=await shelfRequest('/api/settings');if(r.ok)appSettings=await r.json();}catch{}
+}
+async function saveSetting(name,value){
+  const r=await shelfRequest('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{[name]:value}})});
+  const data=await r.json();if(!r.ok)throw Error(data.error||'Could not save the setting.');
+  appSettings=data;
+  comparison=null;comparedAt=0;
+  await refresh();
+  await checkConnection().catch(()=>{});
+}
+const settingsDialog=$('settings-dialog');
+$('open-settings').onclick=async()=>{
+  $('shelf-actions').open=false;
+  await loadSettings();
+  for(const input of settingsDialog.querySelectorAll('input[data-setting]'))input.checked=!!appSettings[input.dataset.setting];
+  $('settings-status').textContent='';
+  settingsDialog.showModal();
+};
+for(const input of document.querySelectorAll('#settings-dialog input[data-setting]')){
+  input.onchange=async()=>{
+    input.disabled=true;
+    try{await saveSetting(input.dataset.setting,input.checked);$('settings-status').textContent='Saved.';}
+    catch(e){input.checked=!input.checked;$('settings-status').textContent=e.message;}
+    finally{input.disabled=false;}
+  };
+}
 $('eject').onclick=async()=>{
   if(busy||loading)return;setBusy(true);$('eject').disabled=true;$('notice').textContent='Finishing up and asking macOS to eject your Kindle…';
   let message;
@@ -3174,7 +3229,7 @@ function renderStorage() {
   });
   $('storage-note').textContent=(storage.partial?'Some files could not be counted. ':'')+'Folder sizes include all file types, hidden files and KOReader data. File sizes may differ from disk space used.';
 }
-refresh();
+loadSettings().finally(refresh);
 
 const fontDialog = $('font-dialog');
 const fontReader = $('font-reader');
@@ -3404,6 +3459,7 @@ $('send-selected').onclick = () => openKindleDelivery(library.books.filter(book 
 async function checkKindleDelivery() {
   const review = deliveryReview;
   review.device = null;
+  review.ready = false;
   deliveryConfirm.disabled = true;
   deliveryRefresh.disabled = true;
   deliveryStatus.textContent = 'Checking USB connection and converter…';
@@ -3411,14 +3467,18 @@ async function checkKindleDelivery() {
     const data = await localRequest('/api/kindle-delivery');
     if (review !== deliveryReview || !deliveryDialog.open) return;
     review.device = data.device;
-    $('kindle-delivery-warning').hidden = !data.converter || data.sandboxed !== false;
+    review.sandboxed = data.sandboxed !== false;
+    $('kindle-delivery-warning').hidden = !data.converter || review.sandboxed;
+    $('kindle-delivery-consent').hidden = !data.converter || review.sandboxed;
+    $('kindle-delivery-unsandboxed').checked = false;
     if (!data.converter) {
       deliveryStatus.textContent = 'KoShelf’s converter is missing. Reinstall KoShelf or build the converter from source.';
     } else if (!data.device) {
       deliveryStatus.textContent = 'Connect one Kindle that appears as a drive on this computer. This USB workflow needs access to its documents folder.';
     } else {
       deliveryStatus.textContent = `Ready to send to ${data.name}. Existing files with the same name will be skipped.`;
-      deliveryConfirm.disabled = false;
+      review.ready = true;
+      deliveryConfirm.disabled = !review.sandboxed && !$('kindle-delivery-unsandboxed').checked;
     }
   } catch (error) {
     if (review === deliveryReview) deliveryStatus.textContent = error.message;
@@ -3428,6 +3488,10 @@ async function checkKindleDelivery() {
 }
 
 deliveryRefresh.onclick = checkKindleDelivery;
+$('kindle-delivery-unsandboxed').onchange = () => {
+  // Without a sandbox, each conversion needs the box ticked.
+  if (deliveryReview?.ready && !busy) deliveryConfirm.disabled = !$('kindle-delivery-unsandboxed').checked;
+};
 deliveryDialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
 
 deliveryConfirm.onclick = async () => {
@@ -3451,7 +3515,8 @@ deliveryConfirm.onclick = async () => {
       try {
         const result = await localRequest('/api/kindle-delivery', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({device: review.device, library: review.root, path: book.path})
+          body: JSON.stringify({device: review.device, library: review.root, path: book.path,
+                                allowUnsandboxed: !review.sandboxed && $('kindle-delivery-unsandboxed').checked})
         });
         if (result.result === 'sent') {
           sent++;

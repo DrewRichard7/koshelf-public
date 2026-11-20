@@ -95,11 +95,23 @@ class AddToBooksTests(unittest.TestCase):
             books = folder / 'books'
             books.mkdir()
             (books / 'Paradiso.epub').write_bytes(b'existing')
-            added = apple_books.add_to_books(source, app.rename_exclusive, books)
+            added = apple_books.add_to_books(source, app.rename_exclusive, app.open_regular, books)
             self.assertEqual(added.name, 'Paradiso (2).epub')
             self.assertEqual(added.read_bytes(), source.read_bytes())
             self.assertEqual((books / 'Paradiso.epub').read_bytes(), b'existing')
             self.assertEqual(sorted(path.name for path in books.iterdir()), ['Paradiso (2).epub', 'Paradiso.epub'])
+
+    def test_symbolic_links_are_never_copied(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            secret = folder / 'secret.txt'
+            secret.write_text('private key')
+            (folder / 'books').mkdir()
+            link = folder / 'Book.epub'
+            link.symlink_to(secret)
+            with self.assertRaises((OSError, ValueError)):
+                apple_books.add_to_books(link, app.rename_exclusive, app.open_regular, folder / 'books')
+            self.assertEqual(list((folder / 'books').iterdir()), [])
 
 
 class ReadingPositionTests(unittest.TestCase):
@@ -144,8 +156,7 @@ class BooksFixture(unittest.TestCase):
             self.addCleanup(target.stop)
         app.AUTO_CONNECT = False
         app.select_library(self.mac)
-        (base / 'state').mkdir()
-        (base / 'state' / 'apple-books-enabled').touch()  # The user has opened Add to Apple Books.
+        app.save_settings({'appleBooksProgress': True})  # The user turned on Apple Books progress.
         for root in (self.kindle, self.mac):
             epub(root / 'Dracula.epub', 'Dracula', 'Bram Stoker')
 
@@ -272,8 +283,9 @@ class BooksReviewFindingTests(BooksFixture):
 
     def test_nothing_is_read_until_the_user_opts_in(self):
         books_library(self.container, [('Dracula', 'Bram Stoker', 0.62, None, 1.0, '/x/Dracula.epub', None)])
-        (app.JOURNAL.parent / 'apple-books-enabled').unlink()
-        with patch.object(apple_books, 'read_library', side_effect=AssertionError('read without opt-in')):
+        app.save_settings({'appleBooksProgress': False})
+        with patch.object(apple_books, 'read_library', side_effect=AssertionError('read without opt-in')), \
+                patch.object(apple_books, 'available', side_effect=AssertionError('looked without opt-in')):
             self.assertNotIn('booksProgress', app.scan()['books'][0])
             self.assertEqual(app.sync_libraries(self.kindle)['appleBooks'], 'off')
 
@@ -309,6 +321,14 @@ class AddToBooksReviewTests(BooksFixture):
             # Removing it in Apple Books removes the file, so it can be added again.
             (icloud / 'Paradiso.epub').unlink()
             self.assertEqual([row['title'] for row in app.apple_books_preview()['missing']], ['Paradiso'])
+
+    def test_review_works_without_turning_on_progress(self):
+        app.save_settings({'appleBooksProgress': False})
+        books_library(self.container, [('Dracula', 'Bram Stoker', 0.5, None, 1.0, None, '1')])
+        preview = app.apple_books_preview()
+        self.assertEqual((preview['state'], preview['present']), ('ok', 1))
+        self.assertFalse(app.settings()['appleBooksProgress'])
+        self.assertNotIn('booksProgress', app.scan()['books'][0])
 
     def test_review_reports_missing_permission(self):
         with patch.object(apple_books, 'database_revision', side_effect=apple_books.AccessDenied('no')):
