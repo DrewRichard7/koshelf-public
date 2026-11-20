@@ -310,7 +310,7 @@ main{
 }
 
 #genre-cleanup-dialog {
-  width: min(760px, 94vw);
+  width: min(1100px, 94vw);
 }
 
 #icloud-dialog {
@@ -385,7 +385,158 @@ main{
 
 .cleanup-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+}
+
+#cleanup-unrecognized summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#cleanup-unrecognized-tags {
+  max-height: 16rem;
+  overflow: auto;
+  margin-top: 4px;
+}
+
+.cleanup-unrecognized-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cleanup-unrecognized-tag .cleanup-tag-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cleanup-unrecognized-tag small {
+  display: inline;
+  margin-left: 8px;
+  color: var(--muted);
+}
+
+.cleanup-saved {
+  margin: 4px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid #c9d6bd;
+  border-radius: 10px;
+  background: #e8eddf;
+  color: var(--green);
+  font-size: 13px;
+}
+
+.cleanup-saved ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.cleanup-saved p {
+  margin: 6px 0 0;
+  color: var(--green);
+}
+
+.cleanup-tag-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e4ebdc;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cleanup-tag-badge.unsaved {
+  background: #f3e3c4;
+  color: #94672a;
+}
+
+.cleanup-list-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cleanup-list-actions p {
+  margin: 0;
+}
+
+.cleanup-book small {
+  white-space: normal;
+}
+
+.cleanup-changes {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.cleanup-change {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cleanup-change:hover {
+  background: #eef0e4;
+}
+
+.cleanup-change input {
+  margin-top: 2px;
+  accent-color: var(--green);
+}
+
+.cleanup-change:has(input:checked) {
+  background: #e8eddf;
+}
+
+.cleanup-change-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 7px;
+  min-width: 0;
+}
+
+.cleanup-change-text small {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+.cleanup-before {
+  color: #6d6455;
+}
+
+.cleanup-arrow {
+  color: var(--muted);
+}
+
+.cleanup-after {
+  font-weight: 600;
+  color: var(--green);
+}
+
+.cleanup-removed {
+  color: #9b4837;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.cleanup-comparison > div.cleanup-unchanged:last-child {
+  background: #f1ede3;
 }
 
 #cleanup-tags {
@@ -682,3 +833,7 @@ main{
   overflow: auto;
 }
 #kindle-delivery-progress { width: 100%; accent-color: var(--green); }
+
+.cleanup-tag-name .cleanup-tag-badge {
+  margin: 4px 0 0;
+}

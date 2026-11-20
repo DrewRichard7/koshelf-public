@@ -1356,7 +1356,7 @@ function renderCleanupTags() {
     input.placeholder = 'Enter a genre';
     const action = el('select', null, 'field');
     action.setAttribute('aria-label', `Rule for ${tag}`);
-    for (const [value, title] of [['default', 'Use default'], ['map', 'Map to genre'], ['keep', 'Keep tag'], ['remove', 'Remove tag']]) {
+    for (const [value, title] of [['default', 'Use default'], ['map', 'Map to genre'], ['keep', 'Recognize as its own genre'], ['remove', 'Remove tag']]) {
       const option = el('option', title);
       option.value = value;
       action.append(option);
@@ -1368,9 +1368,21 @@ function renderCleanupTags() {
     input.hidden = mode !== 'map';
     const rule = el('small', null, 'cleanup-tag-rule');
     rule.textContent = mode === 'default' && !Object.hasOwn(session.preview.mappings, key) ?
-      (replacement === null ? 'Unmapped · keeps original tag' : replacement === '' ? 'Default · removes tag' :
+      (replacement === null ? 'Not recognized · left unchanged' : replacement === '' ? 'Default · removes tag' :
         replacement === tag ? 'Default · keeps tag' : `Default · ${replacement}`) : '';
     rule.hidden = !rule.textContent;
+    // Show what is saved for this tag, and whether an edit is still unsaved.
+    const badge = el('span', null, 'cleanup-tag-badge');
+    label.append(badge);
+    const paintBadge = () => {
+      const saved = session.preview.mappings[key];
+      const unsaved = session.modes.has(key) && session.draft[key] !== saved;
+      badge.classList.toggle('unsaved', unsaved);
+      badge.textContent = unsaved ? 'Unsaved change' : saved === undefined ? '' :
+        saved === '' ? 'Saved · removed' : saved === tag ? 'Saved · recognized' : `Saved · ${saved}`;
+      badge.hidden = !badge.textContent;
+    };
+    paintBadge();
     function updateDraft() {
       session.dirty = true;
       session.stale = true;
@@ -1381,6 +1393,7 @@ function renderCleanupTags() {
       else if (action.value === 'remove') session.draft[key] = '';
       else session.draft[key] = input.value.trim();
       $('cleanup-rules-status').textContent = 'Update the preview to see your edits, or save them for future scans.';
+      paintBadge();
     }
     action.onchange = () => {
       if (action.value === 'map' && !input.value) input.value = replacement ?? '';
@@ -1396,40 +1409,148 @@ function renderCleanupTags() {
   if (!list.firstChild) list.append(el('p', query ? 'No tags match your filter.' : 'No embedded tags in this scope.'));
 }
 
-function updateCleanupApply() {
-  const session = cleanupSession;
-  const count = session.approved.size;
-  const button = $('cleanup-apply');
-  button.disabled = session.pending || session.stale || !count;
-  button.textContent = count ? `Apply to ${count} ${count === 1 ? 'book' : 'books'}` : 'Apply selected';
+function savedMappingNotice(before, preview) {
+  const after = preview.mappings;
+  const labels = new Map(preview.tags.map(tag => [tag.key, tag.tag]));
+  const describe = key => {
+    const tag = labels.get(key) || key;
+    const target = after[key];
+    if (target === undefined) return `${tag} · back to default`;
+    return target === '' ? `${tag} · removed` : target === tag ? `${tag} · recognized` : `${tag} → ${target}`;
+  };
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter(key => before[key] !== after[key]).sort();
+  const books = preview.books.filter(book => book.changes.some(change => change.reason === 'Uses your saved tag mapping.')).length;
+  return {changed: changed.map(describe), books};
 }
 
-function cleanupApproval(book, field, caption) {
+function showSavedNotice(notice) {
+  const box = $('cleanup-saved');
+  box.hidden = !notice;
+  if (!notice) return;
+  const {changed, books} = notice;
+  const heading = changed.length
+    ? `Saved ${changed.length} tag ${changed.length === 1 ? 'mapping' : 'mappings'}`
+    : 'Tag mappings saved · nothing changed';
+  const list = el('ul');
+  list.replaceChildren(...changed.slice(0, 8).map(text => el('li', text)));
+  if (changed.length > 8) list.append(el('li', `And ${changed.length - 8} more`));
+  const next = books
+    ? `${books} ${books === 1 ? 'book now has' : 'books now have'} suggested changes from your mappings below. Books change only when you choose those changes and apply them.`
+    : 'No books in this scan need a change from your mappings. Future scans will use them.';
+  box.replaceChildren(el('strong', `✓ ${heading}`), list, el('p', next));
+}
+
+function renderUnrecognizedTags() {
   const session = cleanupSession;
-  const label = el('label', null, 'cleanup-approval');
+  const {preview} = session;
+  const tags = preview.tags.filter(tag => tag.replacement === null && !Object.hasOwn(preview.mappings, tag.key));
+  const section = $('cleanup-unrecognized');
+  section.hidden = !tags.length;
+  if (!tags.length) return;
+  const books = preview.unmappedBooks;
+  $('cleanup-unrecognized-heading').textContent =
+    `Tags KoShelf doesn't recognize · ${tags.length} ${tags.length === 1 ? 'tag' : 'tags'} on ${books} ${books === 1 ? 'book' : 'books'}`;
+  const list = $('cleanup-unrecognized-tags');
+  list.replaceChildren(...tags.map(({key, tag, count}) => {
+    const row = el('div', null, 'cleanup-unrecognized-tag');
+    const name = el('div', tag, 'cleanup-tag-name');
+    name.append(el('small', count === 1 ? '1 book' : `${count} books`));
+    const recognize = el('button', 'Recognize', 'button');
+    recognize.type = 'button';
+    recognize.setAttribute('aria-label', `Recognize ${tag} as a genre`);
+    recognize.onclick = () => {
+      session.draft[key] = tag;
+      session.modes.set(key, 'keep');
+      if (session.dirty) {
+        // Keep the other unsaved edits; they are saved together.
+        session.stale = true;
+        updateCleanupApply();
+        renderCleanupTags();
+        $('cleanup-unrecognized-status').textContent = `${tag} will be recognized when you save your tag mappings.`;
+        $('cleanup-rules').open = true;
+        return;
+      }
+      session.recognized = tag;
+      scanGenres(true);
+    };
+    const more = el('button', 'Other options…', 'button');
+    more.type = 'button';
+    more.onclick = () => {
+      $('cleanup-rules').open = true;
+      $('cleanup-search').value = tag;
+      renderCleanupTags();
+      $('cleanup-tags').querySelector('select')?.focus();
+    };
+    row.append(name, recognize, more);
+    return row;
+  }));
+}
+
+function updateCleanupApply() {
+  const session = cleanupSession;
+  let changes = 0;
+  for (const choice of session.approved.values()) changes += (choice.title ? 1 : 0) + choice.tags.size;
+  const books = session.approved.size;
+  const button = $('cleanup-apply');
+  button.disabled = session.pending || session.stale || !books;
+  button.textContent = books
+    ? `Apply ${changes} ${changes === 1 ? 'change' : 'changes'} to ${books} ${books === 1 ? 'book' : 'books'}`
+    : 'Apply selected';
+  const toggle = $('cleanup-select-all');
+  const total = (session.preview?.books || []).reduce((sum, book) => sum + book.changes.length + (book.proposedTitle ? 1 : 0), 0);
+  toggle.hidden = !total;
+  toggle.textContent = changes === total ? 'Clear all' : 'Select all';
+}
+
+// Mirrors genre_cleanup.choose_changes; the service recomputes the result when applying.
+function chosenGenres(book, accepted) {
+  const replacements = new Map(book.changes.map(change => [change.tag, change.replacement]));
+  const key = tag => tag.normalize('NFC').split(/\s+/).filter(Boolean).join(' ').toLocaleLowerCase();
+  const result = [];
+  for (const tag of book.current) {
+    if (!accepted.has(tag)) { result.push(tag); continue; }
+    const replacement = replacements.get(tag);
+    if (replacement && !result.some(genre => key(genre) === key(replacement))) result.push(replacement);
+  }
+  return result;
+}
+
+function cleanupChoice(book, kind, value, before, after, reason, refresh) {
+  const session = cleanupSession;
+  const label = el('label', null, 'cleanup-change');
   const input = el('input');
   input.type = 'checkbox';
+  input.dataset.cleanup = 'change';
   input.onchange = () => {
-    const fields = session.approved.get(book.path) || new Set();
-    if (input.checked) fields.add(field);
-    else fields.delete(field);
-    if (fields.size) session.approved.set(book.path, fields);
+    const choice = session.approved.get(book.path) || {title: false, tags: new Set()};
+    if (kind === 'title') choice.title = input.checked;
+    else if (input.checked) choice.tags.add(value);
+    else choice.tags.delete(value);
+    if (choice.title || choice.tags.size) session.approved.set(book.path, choice);
     else session.approved.delete(book.path);
+    refresh();
     updateCleanupApply();
   };
-  label.append(input, document.createTextNode(caption));
+  const text = el('span', null, 'cleanup-change-text');
+  text.append(el('span', before, 'cleanup-before'), el('span', '→', 'cleanup-arrow'),
+    el('span', after || 'remove', after ? 'cleanup-after' : 'cleanup-after cleanup-removed'));
+  if (reason === 'Uses your saved tag mapping.') text.append(el('span', 'Your mapping', 'cleanup-tag-badge'));
+  else if (reason) text.append(el('small', reason));
+  label.append(input, text);
   return label;
 }
 
 function renderCleanupPreview() {
   const {preview} = cleanupSession;
-  const changed = preview.books.filter(book => book.changes.length || book.proposedTitle).length;
-  const unmapped = preview.books.filter(book => book.unmapped.length).length;
-  const summary = [`${preview.scanned} scanned`, `${changed} with changes proposed`, `${unmapped} with unmapped tags`];
+  const changed = preview.books.length;
+  const summary = [`${preview.scanned} scanned`, `${changed} ${changed === 1 ? 'book' : 'books'} with suggested changes`];
   if (preview.skipped) summary.push(`${preview.skipped} unreadable`);
   $('cleanup-status').textContent = summary.join(' · ');
   $('cleanup-rules').hidden = false;
-  $('cleanup-rules-heading').textContent = `Tag mappings · ${preview.tags.length}`;
+  const savedCount = Object.keys(preview.mappings).length;
+  $('cleanup-rules-heading').textContent = `Tag mappings · ${preview.tags.length} tags` + (savedCount ? ` · ${savedCount} saved` : '');
+  renderUnrecognizedTags();
   $('cleanup-genres').replaceChildren(...preview.genres.map(genre => {
     const option = el('option');
     option.value = genre;
@@ -1439,39 +1560,45 @@ function renderCleanupPreview() {
   const books = $('cleanup-books');
   books.replaceChildren();
   cleanupSession.approved.clear();
-  updateCleanupApply();
   const shownBooks = new Map(library.books.map(book => [book.path, book]));
   for (const book of preview.books) {
     const card = el('article', null, 'duplicate-card cleanup-book');
     const body = el('div');
     const shown = shownBooks.get(book.path);
     if (shown?.hasCover) card.append(cover(shown));
-    body.append(el('strong', book.title), el('small', `${book.author} · ${book.path}`));
-    const comparison = el('div', null, 'cleanup-comparison');
-    for (const [label, tags] of [['Current', book.current], ['Proposed', book.proposed]]) {
-      const column = el('div');
-      column.append(el('small', label), el('div', tags.join(' · ') || 'Untagged'));
-      comparison.append(column);
-    }
+    body.append(el('strong', book.title), el('small', `${book.author} · ${book.path}`, 'cleanup-path'));
+    const after = el('div');
+    const result = el('div');
+    const refresh = () => {
+      const choice = cleanupSession.approved.get(book.path);
+      const genres = chosenGenres(book, choice?.tags || new Set());
+      result.textContent = genres.join(' · ') || 'Untagged';
+      after.classList.toggle('cleanup-unchanged', !choice);
+    };
+    const changes = el('div', null, 'cleanup-changes');
     if (book.proposedTitle) {
-      const titleComparison = el('div', null, 'cleanup-comparison');
-      for (const [label, title] of [['Current title', book.title], ['Proposed title', book.proposedTitle]]) {
-        const column = el('div');
-        column.append(el('small', label), el('div', title));
-        titleComparison.append(column);
-      }
-      body.append(titleComparison, el('small', 'The suffix matches the embedded series and book number.'),
-        cleanupApproval(book, 'title', 'Apply title change'));
+      changes.append(cleanupChoice(book, 'title', null, book.title, book.proposedTitle,
+        'Title · the suffix repeats the embedded series and book number.', refresh));
     }
-    if (book.changes.length || book.unmapped.length) body.append(comparison);
-    if (book.changes.length) body.append(cleanupApproval(book, 'genres', 'Apply genre changes'));
-    const notes = [...new Set(book.changes.map(change => change.reason).filter(Boolean))];
-    if (book.unmapped.length) notes.push(`Unmapped tags kept: ${book.unmapped.join(', ')}`);
-    for (const note of notes) body.append(el('small', note));
+    for (const change of book.changes) {
+      changes.append(cleanupChoice(book, 'tag', change.tag, change.tag, change.replacement, change.reason, refresh));
+    }
+    body.append(changes);
+    if (book.changes.length) {
+      const comparison = el('div', null, 'cleanup-comparison');
+      const before = el('div');
+      before.append(el('small', 'Genres now'), el('div', book.current.join(' · ') || 'Untagged'));
+      after.append(el('small', 'After your choices'), result);
+      comparison.append(before, after);
+      body.append(comparison);
+      refresh();
+    }
+    if (book.unmapped.length) body.append(el('small', `Not recognized, left unchanged: ${book.unmapped.join(', ')}`));
     card.append(body);
     books.append(card);
   }
-  if (!books.firstChild) books.append(el('p', 'No genre changes to review.'));
+  if (!books.firstChild) books.append(el('p', 'No suggested changes.'));
+  updateCleanupApply();
 }
 
 async function scanGenres(saveMappings = false) {
@@ -1488,6 +1615,7 @@ async function scanGenres(saveMappings = false) {
   updateCleanupApply();
   $('cleanup-status').textContent = 'Reading embedded tags…';
   $('cleanup-rules').inert = true;
+  $('cleanup-unrecognized').inert = true;
   $('cleanup-scope').disabled = true;
   $('cleanup-close').disabled = saveMappings;
   $('cleanup-books').replaceChildren();
@@ -1497,8 +1625,10 @@ async function scanGenres(saveMappings = false) {
     if (scope === 'selection') request.paths = session.paths;
     if (session.dirty || saveMappings) request.mappings = session.draft;
     if (saveMappings) request.saveMappings = true;
+    const before = session.preview?.mappings || {};
     const preview = await mutation('/api/genre-cleanup-preview', request, {updateStorage: false, root: session.root});
     if (cleanupSession !== session || !cleanupDialog.open) return;
+    if (saveMappings) session.savedNotice = savedMappingNotice(before, preview);
     if (session.root !== library.root) throw Error('The library changed. Reopen genre cleanup to scan again.');
     session.preview = preview;
     session.stale = false;
@@ -1509,8 +1639,13 @@ async function scanGenres(saveMappings = false) {
     $('cleanup-rules-status').textContent = saveMappings ? 'Mappings saved.' :
       session.dirty ? 'Preview updated. Save mappings to reuse them later.' : '';
     renderCleanupPreview();
+    showSavedNotice(session.savedNotice);
+    session.savedNotice = null;
+    session.recognized = null;
   } catch (error) {
     if (cleanupSession !== session || !cleanupDialog.open) return;
+    session.recognized = null;
+    session.savedNotice = null;
     if (session.preview) renderCleanupPreview();
     $('cleanup-status').textContent = error.message;
     $('cleanup-scope').value = session.scope;
@@ -1518,6 +1653,7 @@ async function scanGenres(saveMappings = false) {
     session.pending = false;
     if (cleanupSession === session) {
       $('cleanup-rules').inert = false;
+      $('cleanup-unrecognized').inert = false;
       $('cleanup-scope').disabled = false;
       $('cleanup-close').disabled = false;
       updateCleanupApply();
@@ -1545,11 +1681,25 @@ $('open-genre-cleanup').onclick = () => {
   };
   $('cleanup-rules').hidden = true;
   $('cleanup-rules').open = false;
+  $('cleanup-unrecognized').hidden = true;
+  $('cleanup-unrecognized').open = true;
+  $('cleanup-unrecognized-status').textContent = '';
+  $('cleanup-saved').hidden = true;
   $('cleanup-search').value = '';
   $('cleanup-apply-status').textContent = '';
   $('cleanup-errors').hidden = true;
   cleanupDialog.showModal();
   scanGenres();
+};
+$('cleanup-select-all').onclick = () => {
+  const boxes = [...$('cleanup-books').querySelectorAll('input[data-cleanup="change"]')];
+  const select = boxes.some(box => !box.checked);
+  for (const box of boxes) {
+    if (box.checked !== select) {
+      box.checked = select;
+      box.dispatchEvent(new Event('change'));
+    }
+  }
 };
 $('cleanup-scope').onchange = () => scanGenres();
 $('cleanup-search').oninput = renderCleanupTags;
@@ -1580,10 +1730,10 @@ $('cleanup-apply').onclick = async () => {
   try {
     for (const [index, book] of jobs.entries()) {
       status.textContent = `Saving ${index + 1} of ${jobs.length}…`;
-      const fields = session.approved.get(book.path);
+      const choice = session.approved.get(book.path);
       const request = {path: book.path, revision: book.revision, mappings: session.preview.mappings};
-      if (fields.has('title')) request.title = book.proposedTitle;
-      if (fields.has('genres')) request.genres = book.proposed;
+      if (choice.title) request.title = book.proposedTitle;
+      if (choice.tags.size) request.acceptedTags = [...choice.tags];
       try {
         const data = await mutation('/api/metadata-cleanup-apply', request, {updateStorage: false, root: session.root});
         const shown = library.books.find(entry => entry.path === book.path);

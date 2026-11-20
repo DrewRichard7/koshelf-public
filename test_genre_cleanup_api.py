@@ -116,6 +116,18 @@ class GenreCleanupPreviewTests(unittest.TestCase):
         rescanned = app.genre_cleanup_preview({})
         self.assertEqual([row['path'] for row in rescanned['books']], ['Other.epub'])
 
+    def test_single_tag_change_applies_without_the_others(self):
+        book = self.book('Novel.epub')
+        preview = app.genre_cleanup_preview({'scope': 'selection', 'paths': [book.name]})
+        row = preview['books'][0]
+        request = {'path': book.name, 'revision': row['revision'], 'mappings': {}}
+        with self.assertRaisesRegex(ValueError, 'differ'):
+            app.apply_metadata_cleanup({**request, 'acceptedTags': ['Not a suggested tag']})
+        with self.assertRaisesRegex(ValueError, 'at least one'):
+            app.apply_metadata_cleanup({**request, 'acceptedTags': []})
+        saved = app.apply_metadata_cleanup({**request, 'acceptedTags': [row['changes'][0]['tag']]})
+        self.assertEqual(saved['genres'], app.choose_changes(row['current'], row['changes'], [row['changes'][0]['tag']]))
+
     def test_ambiguous_titles_remain_intact_when_applying_genres(self):
         cases = (
             '<dc:title>Example: A Real Subtitle</dc:title>',

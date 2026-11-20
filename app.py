@@ -37,7 +37,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from genre_cleanup import preview_genres, validate_mappings
+from genre_cleanup import choose_changes, preview_genres, validate_mappings
 import cloud_sync
 import digest_index
 import epub_split
@@ -886,11 +886,23 @@ def apply_metadata_cleanup(body):
         {'scope': 'selection', 'paths': [rel], 'mappings': body['mappings']}, fresh=True,
     )
     suggestion = next(iter(result['books']), None)
-    title, genres = body.get('title'), body.get('genres')
+    title, genres, accepted = body.get('title'), body.get('genres'), body.get('acceptedTags')
     if (not suggestion or suggestion['revision'] != body['revision']
             or (title is not None and title != suggestion['proposedTitle'])
             or (genres is not None and (not suggestion['changes'] or genres != suggestion['proposed']))):
         raise ValueError('The approved changes differ from the current preview. Scan again.')
+    if accepted is not None:
+        # Each tag change is approved on its own; the genres come from the preview, not the request.
+        if genres is not None or not isinstance(accepted, list) or not all(isinstance(tag, str) for tag in accepted):
+            raise ValueError('Choose tag changes from the current preview.')
+        try:
+            genres = choose_changes(suggestion['current'], suggestion['changes'], accepted)
+        except ValueError as exc:
+            raise ValueError('The approved changes differ from the current preview. Scan again.') from exc
+        if genres == suggestion['current']:
+            genres = None
+    if title is None and genres is None:
+        raise ValueError('Choose at least one change to apply.')
     changes = {}
     if title is not None:
         changes['title'] = {'before': suggestion['title'], 'after': title}
