@@ -1,4 +1,6 @@
 """Convert local EPUBs for the Kindle reader on a USB-mounted device."""
+import ctypes
+import ctypes.util
 import filecmp
 import os
 from pathlib import Path
@@ -6,7 +8,9 @@ import posixpath
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from urllib.parse import unquote_to_bytes
 import zipfile
 
@@ -19,6 +23,11 @@ MAX_CONVERSION_CSS = 16 * 1024 * 1024
 MAX_CONVERSION_SPINE = 48 * 1024 * 1024
 MAX_CONVERSION_DOCUMENT = 8 * 1024 * 1024
 MAX_CONVERSION_MARKUP = 500_000
+# GOMEMLIMIT is only a target for Go's garbage collector, so the watchdog
+# stops a converter whose memory keeps growing past this hard limit.
+MAX_CONVERTER_MEMORY = 1024 * 1024 * 1024
+CONVERTER_TIMEOUT = 300
+WATCHDOG_INTERVAL = 0.2
 
 
 def converter():
@@ -185,6 +194,66 @@ def sandboxed(executable, workspace):
     return [SANDBOX_EXEC, '-p', profile, binary]
 
 
+class _RusageInfo(ctypes.Structure):
+    # The leading fields of rusage_info_v0 from <sys/resource.h>.
+    _fields_ = [('uuid', ctypes.c_uint8 * 16), ('user_time', ctypes.c_uint64), ('system_time', ctypes.c_uint64),
+                ('pkg_idle_wkups', ctypes.c_uint64), ('interrupt_wkups', ctypes.c_uint64),
+                ('pageins', ctypes.c_uint64), ('wired_size', ctypes.c_uint64), ('resident_size', ctypes.c_uint64),
+                ('phys_footprint', ctypes.c_uint64), ('proc_start_abstime', ctypes.c_uint64),
+                ('proc_exit_abstime', ctypes.c_uint64)]
+
+
+_LIBPROC = None
+
+
+def process_memory(pid):
+    """The memory a running process uses, in bytes, or None if it cannot be read."""
+    global _LIBPROC
+    if sys.platform == 'darwin':
+        if _LIBPROC is None:
+            try:
+                library = ctypes.CDLL(ctypes.util.find_library('proc') or '/usr/lib/libproc.dylib', use_errno=True)
+                library.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+                library.proc_pid_rusage.restype = ctypes.c_int
+                _LIBPROC = library
+            except (OSError, AttributeError):
+                _LIBPROC = False  # Fall back to the timeout alone.
+        if not _LIBPROC:
+            return None
+        info = _RusageInfo()
+        if _LIBPROC.proc_pid_rusage(pid, 0, ctypes.byref(info)) != 0:
+            return None
+        # Activity Monitor reports this footprint as the process's memory.
+        return info.phys_footprint
+    try:
+        with open(f'/proc/{pid}/statm', encoding='ascii') as stream:
+            return int(stream.read().split()[1]) * os.sysconf('SC_PAGE_SIZE')
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def run_converter(command, *, stderr, cwd, env):
+    """Run the converter, stopping it if it runs too long or uses too much memory."""
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=stderr, cwd=cwd, env=env)
+    deadline = time.monotonic() + CONVERTER_TIMEOUT
+    try:
+        while True:
+            try:
+                return process.wait(timeout=WATCHDOG_INTERVAL)
+            except subprocess.TimeoutExpired:
+                pass
+            if time.monotonic() > deadline:
+                raise ValueError('Conversion took more than five minutes.')
+            used = process_memory(process.pid)
+            if used is not None and used > MAX_CONVERTER_MEMORY:
+                raise ValueError('Conversion used too much memory. Try a smaller EPUB.')
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def convert(source, output, executable):
     # The converter must read the exact bytes we checked even if the source
     # is replaced by another application or an iCloud download in the meantime.
@@ -199,15 +268,11 @@ def convert(source, output, executable):
                 target.write(chunk)
         check_epub(staged)
         with tempfile.TemporaryFile(dir=directory) as errors:
-            try:
-                result = subprocess.run([*sandboxed(executable, output.parent), str(staged), str(output)], check=False,
-                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                        stderr=errors, cwd=directory, timeout=300,
-                                        env={'HOME': directory, 'TMPDIR': directory, 'PATH': '/usr/bin:/bin',
-                                             'GOMEMLIMIT': '384MiB', 'GOTRACEBACK': 'none'})
-            except subprocess.TimeoutExpired as exc:
-                raise ValueError('Conversion took more than five minutes.') from exc
-            if result.returncode:
+            returncode = run_converter([*sandboxed(executable, output.parent), str(staged), str(output)],
+                                       stderr=errors, cwd=directory,
+                                       env={'HOME': directory, 'TMPDIR': directory, 'PATH': '/usr/bin:/bin',
+                                            'GOMEMLIMIT': '384MiB', 'GOTRACEBACK': 'none'})
+            if returncode:
                 errors.seek(0)
                 lines = errors.read(4096).decode(errors='replace').strip().splitlines()
                 reason = lines[0][:240] if lines else 'Check that the EPUB opens and is DRM-free.'

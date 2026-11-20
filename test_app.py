@@ -1,5 +1,6 @@
 """Run with: python3 -m unittest discover -s . -p 'test_*.py'"""
 from base64 import b64decode
+import os
 import tempfile
 import unittest
 import zipfile
@@ -75,5 +76,20 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(book['title'],title)
         self.assertNotIn('description',book)
         self.assertEqual((Path(self.state.name)/'metadata-cache.json').stat().st_mode&0o777,0o600)
+    def test_unchanged_library_returns_only_its_signature(self):
+        book=app.ROOT/'book.epub';epub(book)
+        settings=app.ROOT/'book.sdr'/'metadata.epub.lua';settings.parent.mkdir()
+        settings.write_text('return {\n    ["percent_finished"] = 0.25,\n}\n')
+        os.utime(settings,(1_700_000_000,1_700_000_000))  # Old enough to cache.
+        first=app.library_snapshot()
+        self.assertEqual(first['books'][0]['readingProgress'],0.25)
+        with patch.object(app,'read_reading_settings',side_effect=AssertionError('reread')):
+            self.assertEqual(app.library_snapshot(first['signature']),{'unchanged':True,'signature':first['signature']})
+        # A reading session on the Kindle changes the listing.
+        settings.write_text('return {\n    ["percent_finished"] = 0.5,\n}\n')
+        os.utime(settings,(1_700_000_000,1_700_000_000))  # Same size and time, as on a FAT drive.
+        second=app.library_snapshot(first['signature'])
+        self.assertNotEqual(second['signature'],first['signature'])
+        self.assertEqual(second['books'][0]['readingProgress'],0.5)
 
 if __name__=='__main__': unittest.main()

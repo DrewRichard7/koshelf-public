@@ -4,6 +4,9 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **Old reading-file recovery copies are pruned.** KOReader rewrites a book's reading file on every session, so each sync saved another copy. Sync now keeps the five newest copies of each reading file. EPUB copies and copies that undo needs are always kept.
+- **Returning to the window no longer reloads the shelf when nothing changed.** KoShelf still checks the library's files, but only by their sizes and dates, and skips sending and redrawing the shelf when its listing is the same. Reading progress is reread only from KOReader files that changed.
+- **The Kindle converter has a memory watchdog.** It is stopped if it uses more than 1 GB, in addition to its sandbox, `GOMEMLIMIT`, and five-minute timeout.
 - **Clean up sync leftovers.** A reviewed action in the Mac library finds `._` files copied from the Kindle and `(backup …)` copies left by earlier releases in the Mac library and the iCloud Drive folder. It moves them to the private recovery folder.
 - **Sync no longer clutters libraries with backup copies.** When a Kindle file differs from the Mac file at the same path, sync keeps the Kindle version in KoShelf's private recovery folder. Earlier releases saved it in the Mac library as `Title (backup …)`, where it appeared on the shelf and synced to iCloud Drive.
 - **Books edited on the Mac update the Kindle.** Sync recognizes a Kindle copy that predates an edit made in KoShelf and updates it, instead of reporting a conflict.

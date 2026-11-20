@@ -616,12 +616,32 @@ def status_sync_plan(mac, kindle, transfers=None):
     return plan
 
 
+READING_CACHE = {}
+
+
 def koreader_reading(book):
-    """Read the fields from a KOReader-generated adjacent settings file as text."""
+    """Read KOReader's reading fields for a book, rereading only changed settings files."""
     sidecar = book.with_suffix('.sdr')
     settings = sidecar / f'metadata.{book.suffix[1:].lower()}.lua'
-    if sidecar.is_symlink():
+    try:
+        if sidecar.is_symlink():
+            return {}
+        info = settings.lstat()
+    except OSError:
         return {}
+    key = (str(settings), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    # FAT drives such as a Kindle keep times in 2-second steps, so a file
+    # rewritten within that window can look unchanged. Reread recent files.
+    if time.time() - info.st_mtime < 3:
+        return parse_koreader_reading(settings)
+    if key not in READING_CACHE:
+        if len(READING_CACHE) > 8192:
+            READING_CACHE.clear()
+        READING_CACHE[key] = parse_koreader_reading(settings)
+    return dict(READING_CACHE[key])
+
+
+def parse_koreader_reading(settings):
     try:
         data = read_reading_settings(settings)
     except (OSError, ValueError):
@@ -709,6 +729,15 @@ def scan():
     return dict(connected=True, root=str(ROOT), books=books, folders=folders,
                 candidates=candidates, canEject=detected_kindle or device_info() is not None,
                 localFirst=LOCAL_FIRST, macRoot=str(mac_library().resolve()) if LOCAL_FIRST else None)
+
+
+def library_snapshot(known=None):
+    """The library listing, or only its signature when the caller already has it."""
+    listing = scan()
+    signature = hashlib.sha256(json.dumps(listing, sort_keys=True, default=str).encode()).hexdigest()
+    if known == signature:
+        return {'unchanged': True, 'signature': signature}
+    return {**listing, 'signature': signature}
 
 
 def select_library(path):
@@ -1264,6 +1293,64 @@ def sync_version_path(relative, digest, *, create=False):
     else:
         folder = JOURNAL.parent.joinpath('sync-versions', *parts[:-1])
     return backup_version(folder / parts[-1], digest)
+
+
+MAX_READING_VERSIONS = 5
+
+
+def prune_sync_versions(kindle, keep=MAX_READING_VERSIONS):
+    """Keep only the newest recovery copies of each KOReader reading file.
+
+    KOReader rewrites a book's .sdr settings on every reading session, so each
+    sync saves another copy. EPUB copies, any copy that sync history needs for
+    undo, and the copy that matches the Kindle's current file are always kept.
+    """
+    folder = JOURNAL.parent / 'sync-versions'
+    try:
+        if not statmod.S_ISDIR(folder.lstat().st_mode):
+            return 0
+    except FileNotFoundError:
+        return 0
+    needed = {action['backup'] for run in sync_history() for action in run['actions']
+              if isinstance(action, dict) and isinstance(action.get('backup'), str)}
+    groups = {}
+    for base, dirs, files in os.walk(folder, followlinks=False):
+        relative = PurePosixPath(Path(base).relative_to(folder).as_posix())
+        if not any(part.lower().endswith('.sdr') for part in relative.parts):
+            continue
+        for name in files:
+            match = re.fullmatch(r'(.+) \(backup ([0-9a-f]{16})\)(.*)', name)
+            path = Path(base) / name
+            if not match or str(path) in needed:
+                continue
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if statmod.S_ISREG(info.st_mode):
+                saved = getattr(info, 'st_birthtime', info.st_ctime)
+                original = relative / (match[1] + match[3])
+                groups.setdefault(original, []).append((saved, name, match[2], path))
+    removed = 0
+    for original, versions in groups.items():
+        # A version the Kindle has returned to keeps its old birth time, so keep it by content.
+        current = None
+        try:
+            kindle_file = kindle.joinpath(*original.parts)
+            info = kindle_file.lstat()
+            if statmod.S_ISREG(info.st_mode):
+                current = sync_digest(kindle_file, info)[:16]
+        except (OSError, ValueError):
+            pass
+        for _, _, digest, path in sorted(versions, reverse=True)[keep:]:
+            if digest == current:
+                continue
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                continue
+    return removed
 
 
 def saved_sync_version(relative, digest, library_path_, *, fresh=False):
@@ -2275,6 +2362,10 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
             if len(sent['errors']) < 5:
                 sent['errors'].append(f"{edit['path']}: {exc}")
     history.finish(result, sent)
+    try:
+        prune_sync_versions(kindle)
+    except Exception as exc:  # The sync already finished; pruning can wait for the next one.
+        print(f'KoShelf could not prune old recovery copies: {exc}', file=sys.stderr)
     return {'mac': result, 'kindle': sent}
 
 
@@ -3175,7 +3266,8 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             if url.path == '/api/storage': return self.send(storage_usage())
             if url.path == '/api/library':
-                try: return self.send(scan())
+                known = urllib.parse.parse_qs(url.query).get('known', [None])[0]
+                try: return self.send(library_snapshot(known))
                 except (OSError, ValueError) as exc: return self.send({'error': str(exc)}, status=400)
             if url.path == '/api/sync-history':
                 try:
@@ -3261,7 +3353,7 @@ class Handler(BaseHTTPRequestHandler):
                 report_progress()  # Each operation starts with a clean transfer count.
                 if self.path == '/api/library':
                     select_library(body['path'])
-                    return self.send(scan())
+                    return self.send(library_snapshot())
                 if str(ROOT) != body.get('library'):
                     raise ValueError('Library changed. Refresh before making changes.')
                 if self.path == '/api/kindle-setup':
