@@ -101,7 +101,7 @@ python3 -B -m unittest discover -q
 node --check static/app.js
 ```
 
-`app.py` serves the local API and handles EPUB and library operations. `genre_cleanup.py` implements offline genre suggestions. The shared interface lives in `static/`. `launcher.py` starts the desktop app or browser service, and `native/KoShelf.swift` hosts the interface and manages the desktop service. See [TODO.md](TODO.md) for the roadmap.
+`app.py` serves the local API and handles EPUB and library operations. `genre_cleanup.py` implements offline genre suggestions. The shared interface lives in `static/`. `launcher.py` starts the desktop app or browser service, and `native/KoShelf.swift` hosts the interface and manages the desktop service. See [TODO.md](TODO.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## License
 

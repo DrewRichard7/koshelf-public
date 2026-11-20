@@ -2,6 +2,10 @@
 
 This public repository is where KoShelf is developed and released. Work on a branch, open a pull request into `main`, and tag releases from `main`. Everything committed here is public, so keep local paths, personal details, and real library data out of commits and screenshots.
 
+## Roadmap and changelog
+
+Open work lives in `TODO.md`. When an item ships, remove it there and add it under **Unreleased** in `CHANGELOG.md`.
+
 ## Checks
 
 Run these before every commit:
@@ -42,7 +46,7 @@ Keep the warm paper palette, subtle grain, fixed-position library slider, and th
 
 ## Releasing
 
-1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `native/Info.plist`. Update the README for any changed behavior.
+1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `native/Info.plist`. Update the README for any changed behavior. In `CHANGELOG.md`, move **Unreleased** into a new version heading.
 2. Run `./scripts/package-macos.sh`, then `python3 -B scripts/check-service.py build/portable/KoShelf.app`. Mount the DMG and run the same check against the app inside it.
 3. Stage the converter the way `scripts/build-kindle-converter.sh` does. Then run `govulncheck ./...` there for `GOARCH=arm64` and `GOARCH=amd64`.
 4. Check that the KoShelf you open for manual testing is the new build. Look at its version in **About KoShelf**.
