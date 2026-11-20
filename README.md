@@ -16,7 +16,7 @@ The disk image includes [Read before installing](READ-BEFORE-INSTALLING.txt). Th
 
 ## Open KoShelf
 
-On a Mac with the desktop app installed, search for **KoShelf** in Raycast or open it from `/Applications` or `~/Applications`. The app starts its own local service on an available port. **Command-Q** closes the app and waits for active file requests.
+On a Mac with the desktop app installed, search for **KoShelf** in Raycast or open it from `/Applications` or `~/Applications`. The app starts its own local service on an available port. **Command-Q** closes the app and waits for active file requests. If a transfer is still running, KoShelf explains the wait and offers **Quit Now**.
 
 From a checkout, use the following commands:
 
