@@ -14,10 +14,6 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 - [ ] **Cross-platform browser version.** Check that browser mode works across platforms and browsers, and decide which platforms to support.
 - [ ] **Wireless transfer (Wi-Fi or Bluetooth).** Sync with KoShelf without a cable when the Kindle is awake and nearby. This will likely be a KOReader plugin built in its own repository, with KoShelf providing the Mac side. When that repository exists, link it here.
 
-## Bugs
-
-- [ ] Add a reviewed cleanup for libraries synced by earlier releases. It removes `._` files from the Mac library and moves `(backup …)` copies into the recovery folder.
-
 ## Testing
 
 - [ ] Test 1.1.0's Kindle sync, eject, and Send to Kindle on a physical Kindle.

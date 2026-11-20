@@ -14,6 +14,7 @@
       <button id="open-font-manager" type="button">Manage fonts…</button>
       <button id="open-library-health" type="button">Library health check</button>
       <button id="open-genre-cleanup" type="button">Clean up metadata…</button>
+      <button id="open-sync-leftovers" type="button">Clean up sync leftovers…</button>
       <button id="remove-folder" type="button" hidden>Remove folder…</button>
     </div>
   </details>
@@ -282,6 +283,14 @@
   <p id="sync-history-status" role="status"></p>
   <div id="sync-history-runs"></div>
   <form method="dialog" class="actions"><button id="close-sync-history" class="button" autofocus>Close</button></form>
+</dialog>
+<dialog id="sync-leftovers-dialog" aria-labelledby="sync-leftovers-heading">
+  <h2 id="sync-leftovers-heading">Clean up sync leftovers</h2>
+  <p>Earlier versions of KoShelf left hidden <code>._</code> files from the Kindle and <code>(backup …)</code> copies in your libraries. KoShelf moves them to its private recovery folder. Nothing is deleted, and the books themselves stay where they are.</p>
+  <p id="sync-leftovers-status" role="status"></p>
+  <div id="sync-leftovers-results"></div>
+  <form method="dialog" class="actions"><button class="button" value="cancel" autofocus>Close</button>
+    <button id="apply-sync-leftovers" class="button primary" type="button" hidden>Move to recovery folder</button></form>
 </dialog>
 <dialog id="library-health-dialog" aria-labelledby="library-health-heading">
   <h2 id="library-health-heading">Library health check</h2>
