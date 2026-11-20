@@ -109,7 +109,7 @@ def _book_suggestion(book, current, keys, replacements, mappings):
                 seen.add(replacement_key)
         if replacement != tag:
             changes.append({"tag": tag, "replacement": replacement, "reason": reason})
-    if changes or unmapped:
+    if changes:
         return {
             "path": book["path"], "title": book["title"], "author": book["author"],
             "current": current, "proposed": proposed, "changes": changes, "unmapped": unmapped,
@@ -127,6 +127,7 @@ def preview_genres(books, mappings=None):
     labels = {}
     replacements = {}
     suggestions = []
+    unmapped_books = 0
     for book in books:
         current = book.get("genres", [])
         keys = [tag_key(tag) for tag in current]
@@ -135,6 +136,8 @@ def preview_genres(books, mappings=None):
             if key not in labels:
                 labels[key] = tag
                 replacements[key] = _replacement(key, mappings, custom_genres)
+        if any(replacements[key] is None for key in keys):
+            unmapped_books += 1
         suggestion = _book_suggestion(book, current, keys, replacements, mappings)
         if suggestion:
             suggestions.append(suggestion)
@@ -144,4 +147,24 @@ def preview_genres(books, mappings=None):
     ]
     genres = sorted({**{tag_key(genre): genre for genre in GENRE_ALIASES},
                      **custom_genres}.values(), key=str.casefold)
-    return {"books": suggestions, "tags": tags, "genres": genres}
+    return {"books": suggestions, "tags": tags, "genres": genres, "unmappedBooks": unmapped_books}
+
+
+def choose_changes(current, changes, accepted):
+    """The genres that result from applying only the accepted tag changes.
+
+    Tags without an accepted change stay exactly as they are.
+    """
+    replacements = {change["tag"]: change["replacement"] for change in changes}
+    accepted = set(accepted)
+    if not accepted <= replacements.keys():
+        raise ValueError("Choose changes from the current preview")
+    result = []
+    for tag in current:
+        if tag not in accepted:
+            result.append(tag)
+            continue
+        replacement = replacements[tag]
+        if replacement and tag_key(replacement) not in {tag_key(genre) for genre in result}:
+            result.append(replacement)
+    return result

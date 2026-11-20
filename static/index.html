@@ -308,18 +308,27 @@
     <select id="cleanup-scope" class="field"></select>
   </div>
   <p id="cleanup-status" role="status"></p>
+  <div id="cleanup-saved" class="cleanup-saved" role="status" hidden></div>
+  <details id="cleanup-unrecognized" class="duplicate-card" hidden>
+    <summary id="cleanup-unrecognized-heading"></summary>
+    <p class="hint">KoShelf leaves these tags unchanged. Recognize a tag to keep it as a genre: KoShelf remembers it, so books with the same tag, now or later, count as that genre.</p>
+    <p id="cleanup-unrecognized-status" role="status"></p>
+    <div id="cleanup-unrecognized-tags" class="cleanup-list"></div>
+  </details>
   <details id="cleanup-rules" class="duplicate-card" hidden>
     <summary id="cleanup-rules-heading">Tag mappings</summary>
     <label for="cleanup-search">Filter tags</label>
     <input id="cleanup-search" class="field" type="search" autocomplete="off">
     <div id="cleanup-tags" class="cleanup-list"></div>
     <datalist id="cleanup-genres"></datalist>
+    <p class="hint">Saving a mapping changes the suggestions below and future scans. Books change only when you choose their changes and apply them.</p>
     <p id="cleanup-rules-status" role="status"></p>
     <div class="cleanup-rule-actions">
       <button id="cleanup-preview" type="button" class="button">Update preview</button>
       <button id="cleanup-save" type="button" class="button primary">Save mappings</button>
     </div>
   </details>
+  <div class="cleanup-list-actions"><p class="hint">Choose each change you want. Nothing is selected until you choose it.</p><button id="cleanup-select-all" type="button" class="button" hidden>Select all</button></div>
   <p id="cleanup-apply-status" role="status"></p>
   <ul id="cleanup-errors" hidden></ul>
   <div id="cleanup-books" class="cleanup-list"></div>

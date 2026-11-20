@@ -1,6 +1,6 @@
 import unittest
 
-from genre_cleanup import preview_genres, validate_mappings
+from genre_cleanup import choose_changes, preview_genres, validate_mappings
 
 
 def book(path, *genres):
@@ -21,8 +21,10 @@ class GenreCleanupTests(unittest.TestCase):
         source = [book("First.epub", "Award Winner", "FICTION / Unknown / Space Opera"),
                   book("Second.epub", "award winner", "AWARD WINNER")]
         result = preview_genres(source)
-        self.assertEqual(result["books"][0]["proposed"], source[0]["genres"])
-        self.assertEqual(result["books"][0]["changes"], [])
+        # A book whose tags simply have no rule is not a proposed change.
+        self.assertEqual([row["path"] for row in result["books"]], ["Second.epub"])
+        self.assertEqual(result["books"][0]["proposed"], ["award winner"])
+        self.assertEqual(result["unmappedBooks"], 2)
         self.assertEqual(result["tags"][0], {
             "tag": "Award Winner", "key": "award winner", "count": 2, "replacement": None,
         })
@@ -50,9 +52,31 @@ class GenreCleanupTests(unittest.TestCase):
 
     def test_unrecognized_non_english_subjects_stay_intact(self):
         source = book("Novel.epub", "Ciencia ficción", "传记")
+        result = preview_genres([source])
+        self.assertEqual(result["books"], [])
+        self.assertEqual(result["unmappedBooks"], 1)
+
+    def test_each_tag_change_can_be_accepted_on_its_own(self):
+        source = book("Novel.epub", "Fiction", "Sci-Fi", "Pulitzer Prize")
         suggestion, = preview_genres([source])["books"]
-        self.assertEqual(suggestion["proposed"], source["genres"])
-        self.assertEqual(suggestion["unmapped"], source["genres"])
+        self.assertEqual(suggestion["proposed"], ["Science Fiction", "Pulitzer Prize"])
+        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Sci-Fi"]),
+                         ["Fiction", "Science Fiction", "Pulitzer Prize"])
+        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Fiction"]),
+                         ["Sci-Fi", "Pulitzer Prize"])
+        self.assertEqual(choose_changes(source["genres"], suggestion["changes"], ["Fiction", "Sci-Fi"]),
+                         suggestion["proposed"])
+        with self.assertRaises(ValueError):
+            choose_changes(source["genres"], suggestion["changes"], ["Pulitzer Prize"])
+
+    def test_recognized_tag_covers_current_and_future_books(self):
+        recognized = {"western": "Western"}
+        result = preview_genres([book("First.epub", "Western"), book("Second.epub", "Western")], recognized)
+        self.assertEqual((result["books"], result["unmappedBooks"]), ([], 0))
+        self.assertIn("Western", result["genres"])
+        # A later book with the same tag in other capitalization joins the genre.
+        suggestion, = preview_genres([book("Later.epub", "WESTERN")], recognized)["books"]
+        self.assertEqual(suggestion["proposed"], ["Western"])
 
     def test_conflicting_normalized_mappings_are_rejected(self):
         with self.assertRaises(ValueError):
