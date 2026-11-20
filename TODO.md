@@ -16,7 +16,7 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 
 ## Bugs
 
-- [ ] Investigate problems with a sync backup copy named `… (backup <hash>).epub`. Sync creates these names when a Kindle book conflicts with a different Mac version.
+- [ ] Add a reviewed cleanup for libraries synced by earlier releases. It removes `._` files from the Mac library and moves `(backup …)` copies into the recovery folder.
 
 ## Testing
 
