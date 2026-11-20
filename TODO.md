@@ -13,6 +13,7 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 - [ ] **KOReader progress on Mac and iPhone.** Look into syncing progress with KOReader on other devices, for example through KOReader's progress sync server.
 - [ ] **Selective sync.** Let a sync review skip individual changes or whole categories (copies to Mac, copies to Kindle, replacements, reading statuses, folder removals), so applying a review isn't all or nothing.
 - [ ] **In-app updates.** Check for new releases and install them without downloading a new disk image each time. If a full download is unavoidable, make updating simpler than Calibre's.
+- [ ] **Sandbox the Kindle converter on Linux.** Run it without network access and with writes limited to its workspace, for example with bubblewrap or Landlock. Until then, Send to Kindle on Linux runs it unsandboxed with a warning.
 - [ ] **Linux support.** Make KoShelf work fully on Linux, including Kindle detection, eject, and the Kindle converter.
 - [ ] **Cross-platform browser version.** Check that browser mode works across platforms and browsers, and decide which platforms to support.
 - [ ] **Wireless transfer (Wi-Fi or Bluetooth).** Sync with KoShelf without a cable when the Kindle is awake and nearby. This will likely be a KOReader plugin built in its own repository, with KoShelf providing the Mac side. When that repository exists, link it here.

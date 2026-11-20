@@ -26,18 +26,20 @@ HOME="$scratch/home" KOSHELF_STATE_DIR="$scratch/state" ./koshelf --browser --li
 
 Tests that scan a library must point `app.JOURNAL` at a temporary folder. Otherwise they write caches into `state/` in the checkout.
 
+A service started without `KOSHELF_STATE_DIR` uses the real app data folder (`~/Library/Application Support/KoShelf` on macOS), so always set it for manual tests. On macOS a browser service also detects any Kindle mounted under `/Volumes`, even with a temporary `HOME`. If the maintainer's Kindle is connected, don't sync, eject, or send to it during a manual test.
+
 ## Layout notes
 
 - **Bundled Python modules.** The app bundle includes only the modules listed in `scripts/build-macos.sh`. When you add a Python module, add it there. `scripts/check-service.py` fails if one is missing.
 - **Python version.** The minimum is 3.11. It is enforced in `app.py`, `launcher.py`, and `native/KoShelf.swift`, so change all three together, along with the README.
-- **Saved state.** The state folder holds `metadata-cache.json`, which is discarded whenever `app.py` changes, and `sync-digests.json`. Both are only caches and are safe to delete. `sync-versions/` holds recovery copies of Kindle files that differed during a sync. Undo depends on it, so it is not a cache.
+- **Saved state.** The app and the browser service share one state folder: `~/Library/Application Support/KoShelf` on macOS, and `$XDG_STATE_HOME/koshelf` or `~/.local/state/koshelf` on Linux. `app.main` resolves it at startup, so importing `app` in tests never touches it. `service.lock` keeps a second service from using the same folder. The state folder holds `metadata-cache.json`, which is discarded whenever `app.py` changes, and `sync-digests.json`. Both are only caches and are safe to delete. `sync-versions/` holds recovery copies of Kindle files that differed during a sync. Undo depends on it, so it is not a cache.
 
 ## Boundaries to preserve
 
 - **Local service.** The Python service binds only to `127.0.0.1`, on a random port unless `--port` is given. Private APIs require the per-launch session credential. Requests must match `Host`, and mutations also check `Origin` and `Sec-Fetch-Site`. If you change request headers or asset loading, verify the change in the native WebKit window.
 - **Untrusted content.** EPUB metadata and filenames are untrusted. The UI sets text with `textContent` and never uses `innerHTML`. Check XML with `epub_safety.check_xml` before parsing it; `parse_xml` does both. ZIP reads stay bounded.
 - **Filesystem.** Library paths go through `library_path`, which rejects symbolic links and paths that cross filesystems. Moves use `rename_exclusive` and never overwrite. Replacements keep verified recovery copies.
-- **Converter.** The Kindle converter runs under `sandbox-exec` (see `kindle_delivery.sandboxed`). Keep it without network access and with writes limited to its workspace.
+- **Converter.** The Kindle converter runs under `sandbox-exec` (see `kindle_delivery.sandboxed`). Keep it without network access and with writes limited to its workspace. Linux has no sandbox yet. There it runs with a warning in the Send to Kindle dialog until Linux sandboxing (see `TODO.md`) is added.
 - **DRM.** KoShelf handles only DRM-free books. `test_drm.py` guards this.
 
 ## Interface

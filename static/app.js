@@ -3273,10 +3273,11 @@ async function checkKindleDelivery() {
     const data = await localRequest('/api/kindle-delivery');
     if (review !== deliveryReview || !deliveryDialog.open) return;
     review.device = data.device;
+    $('kindle-delivery-warning').hidden = !data.converter || data.sandboxed !== false;
     if (!data.converter) {
       deliveryStatus.textContent = 'KoShelf’s converter is missing. Reinstall KoShelf or build the converter from source.';
     } else if (!data.device) {
-      deliveryStatus.textContent = 'Connect one Kindle that appears as a drive on your Mac. This USB workflow needs access to its documents folder.';
+      deliveryStatus.textContent = 'Connect one Kindle that appears as a drive on this computer. This USB workflow needs access to its documents folder.';
     } else {
       deliveryStatus.textContent = `Ready to send to ${data.name}. Existing files with the same name will be skipped.`;
       deliveryConfirm.disabled = false;

@@ -25,9 +25,14 @@ From a checkout, use the following commands:
 ./koshelf --browser             # Default browser
 ./koshelf --browser --port 8766 # Fixed local port instead of a random one
 ./koshelf --library /path/to/books
+./koshelf --version
 ```
 
-Browser mode listens on a random local port. Running `./koshelf --browser` again reopens the service you already started. Keep the terminal open while using the browser service. Press Control-C to stop it. To use `koshelf` from any directory, put a symlink to the wrapper in a directory on your PATH, such as `~/.local/bin`. `Launch.command` also works from Finder.
+The wrapper works from bash, zsh, or any POSIX shell on macOS and Linux. To use `koshelf` from any directory, put a symlink to it in a directory on your PATH, such as `~/.local/bin`. On Linux there is no desktop app, so `koshelf` always opens the browser. `Launch.command` also works from Finder.
+
+Browser mode listens on a random local port. Running `./koshelf --browser` again reopens the service you already started. Keep the terminal open while using the browser service. Press Control-C to stop it.
+
+The app and the browser share their saved data, so only one can be open at a time. If the app is open, `koshelf --browser` explains that and exits. Quit the app first to use the browser.
 
 ## Browse and organize
 
@@ -73,11 +78,13 @@ With both libraries available, **Sync libraries** reviews proposed changes in bo
 
 When you open an explicit folder with `--library`, **Back up library** copies into `~/KoShelf Library`. It preserves relative paths and empty folders, skips identical files, and saves changed same-path files under a content-based suffix. Keep the source connected through the result summary.
 
-The desktop app stores logs and recovery data under `~/Library/Application Support/KoShelf/`. The browser service defaults to `state/` in the checkout. Set `KOSHELF_STATE_DIR` to use another folder. The state folder also holds `metadata-cache.json` and `sync-digests.json`, which let KoShelf skip rereading unchanged books. Deleting them is safe. `moves.jsonl` records metadata backup paths, and `metadata-backups/` holds original EPUBs. `sync-versions/` holds Kindle versions that differed from the Mac during a sync, including older KOReader reading files, arranged by library path. To restore a metadata backup, locate the original path in the journal, quit KoShelf, and copy the saved EPUB over that path using the original filename. Backups accumulate until you manage them.
+KoShelf stores its data under `~/Library/Application Support/KoShelf/` on macOS, for both the app and the browser, and under `~/.local/state/koshelf/` on Linux, or `$XDG_STATE_HOME/koshelf/` when that is set. This data includes tag mappings, sync history and undo, recovery copies, and logs. Set `KOSHELF_STATE_DIR` to use another folder. Earlier releases kept browser data in `state/` in the checkout; move its files into the new folder to keep them. The state folder also holds `metadata-cache.json` and `sync-digests.json`, which let KoShelf skip rereading unchanged books. Deleting them is safe. `moves.jsonl` records metadata backup paths, and `metadata-backups/` holds original EPUBs. `sync-versions/` holds Kindle versions that differed from the Mac during a sync, including older KOReader reading files, arranged by library path. To restore a metadata backup, locate the original path in the journal, quit KoShelf, and copy the saved EPUB over that path using the original filename. Backups accumulate until you manage them.
 
 ## Privacy and security
 
-KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. iCloud Drive sync is optional and uses the folder you select.
+KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. Linux has no sandbox for it yet. If you build the converter on Linux, **Send to Kindle** warns that it runs with your normal permissions, so convert only EPUBs you trust.
+
+On macOS, the launcher hands your session to the browser through a private file. On Linux, Snap browsers can't read that file, so the launcher opens a single-use link instead. The link stops working after one minute or once it has been used. KoShelf accepts it only from a browser running under your user account. iCloud Drive sync is optional and uses the folder you select.
 
 Use a folder dedicated to your books. The original backup workflow can copy companion files from the selected library, including KOReader reading data. KoShelf checks EPUB structure and limits resource usage when processing files. EPUBs and fonts still come from outside KoShelf and may also be parsed by your reader. KoShelf works only with DRM-free books and refuses encrypted or signed EPUBs.
 

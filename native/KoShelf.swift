@@ -116,6 +116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let self = self else { return }
                 self.pipe.fileHandleForReading.readabilityHandler = nil
                 if self.quitting { NSApp.reply(toApplicationShouldTerminate: true) }
+                else if process.terminationStatus == 75 {
+                    // app.py exits with 75 when another KoShelf service already uses the data folder.
+                    self.fail("KoShelf is already open, either in a browser or in another copy of the app. Close it (Control-C in the terminal for a browser service), then reopen KoShelf.")
+                }
+                else if process.terminationStatus == 78 {
+                    self.fail("KoShelf can't use its data folder. Details: ~/Library/Application Support/KoShelf/service.log")
+                }
                 else { self.fail("The local library service stopped. Quit and reopen KoShelf. Details: ~/Library/Application Support/KoShelf/service.log") }
             }
         }
