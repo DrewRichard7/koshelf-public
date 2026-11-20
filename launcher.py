@@ -70,8 +70,21 @@ def installed_app():
     return None
 
 
+def version():
+    import plistlib
+    here = Path(__file__).resolve().parent
+    for info in (here / 'native' / 'Info.plist', here.parent / 'Info.plist'):
+        try:
+            with info.open('rb') as stream:
+                return plistlib.load(stream)['CFBundleShortVersionString']
+        except (OSError, KeyError, ValueError, plistlib.InvalidFileException):
+            continue
+    return 'unknown'
+
+
 def main():
     parser=argparse.ArgumentParser(prog='koshelf', description='Open the KoShelf desktop app or launch the local browser interface.')
+    parser.add_argument('--version', action='version', version=f'KoShelf {version()}')
     parser.add_argument('--browser', action='store_true', help='Open the browser version instead of the macOS app')
     parser.add_argument('--library',help='Open a specific folder instead of the Mac library')
     parser.add_argument('--port', type=int, help='Serve the browser interface on this local port (default: any free port)')
@@ -96,12 +109,12 @@ def main():
     try:
         identity = running_identity(args.port, challenge) if args.port else None
     except (ValueError,OSError):
-        parser.exit(1, 'This port is occupied by an unrecognized service. Stop it or use --port 8766.\n')
+        parser.exit(1, f'Port {args.port} is in use by another program. Choose another --port, or leave it out to use any free port.\n')
     if identity is not None:
         try:
             secret = verified_secret(args.port, identity, challenge)
         except (OSError, ValueError):
-            parser.exit(1, 'Could not verify a browser session on this port. Stop it or use --port 8766.\n')
+            parser.exit(1, f'Could not verify the KoShelf session on port {args.port}. Stop it, or leave out --port to use any free port.\n')
         if args.library:
             parser.exit(1, 'KoShelf is already running. Choose the folder in its interface, or use another --port.\n')
         local_session.open_browser(args.port, secret)

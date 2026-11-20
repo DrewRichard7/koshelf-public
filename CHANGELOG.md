@@ -4,6 +4,10 @@ This file records notable changes to KoShelf, newest first. Planned work lives i
 
 ## Unreleased
 
+- **The browser version shares the app's data.** On macOS both use `~/Library/Application Support/KoShelf`, and on Linux `~/.local/state/koshelf`. Tag mappings, sync history and undo, recovery copies, and the record of books edited on the Mac now carry over between them. Only one can be open at a time, and a second one explains why it can't start. If the app crashes or is force-quit, its service now stops too, so the app reopens normally. Earlier releases kept browser data in `state/` in the checkout.
+- **Opening the browser works with Snap browsers on Linux.** The launcher opens a single-use link that expires after a minute, instead of a file in `/tmp` that Snap's Firefox and Chromium can't read. Only a browser running under your account can use the link.
+- **Send to Kindle on Linux warns that the converter isn't sandboxed yet.** Linux sandboxing is on the roadmap.
+- `koshelf --version` prints the version. Port errors name the port and suggest leaving out `--port`. The browser tab shows the KoShelf icon.
 - **Sync never overwrites the Kindle's reading file.** A book finished on the Mac copies only the finished status into the Kindle's file, so the Kindle's reading position, highlights, and notes stay. If the Mac shows more progress for any other reason, the Kindle copy is kept and the review explains why. Reading-progress updates can now be undone from sync history. Their recovery copies are kept for the last 10 syncs.
 - **Fixes to the sync review for renamed books.** **Keep both for now** leaves that one book in place instead of blocking the whole sync. Several identical copies under different names sync as ordinary files again. Sync can now be applied when more than 100 books were renamed.
 - **Fixes to metadata cleanup.** Choosing only some genre changes can no longer save a genre twice or remove both copies of a repeated tag. The "After your choices" preview matches what is saved, including for letters such as "ß". A tag recognized only in an unsaved preview shows as unsaved. **Recognize** is unavailable while changes are being applied.

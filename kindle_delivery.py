@@ -170,13 +170,20 @@ def sandbox_string(path):
     return '"' + str(path).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+def sandbox_available():
+    """Whether the converter can run in a sandbox. Linux sandboxing is on the roadmap."""
+    return os.path.exists(SANDBOX_EXEC)
+
+
 def sandboxed(executable, workspace):
     """Run the converter without network access or writes outside its workspace.
 
     The converter parses untrusted EPUBs, so on macOS it may read only system
     files, its own binary, and the private workspace that holds the checked copy.
     """
-    if not os.path.exists(SANDBOX_EXEC):
+    if not sandbox_available():
+        print('KoShelf: running the Kindle converter without a sandbox, which this system does not provide yet.',
+              file=sys.stderr, flush=True)
         return [executable]
     workspace = os.path.realpath(workspace)
     binary = os.path.realpath(executable)

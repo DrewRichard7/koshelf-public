@@ -3136,6 +3136,8 @@ class LocalServer(ThreadingHTTPServer):
 
     def __init__(self, address, handler):
         self.session_secret = secrets.token_hex(32)
+        self.handoffs = {}
+        self.handoff_lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(self.request_slots)
         super().__init__(address, handler)
 
@@ -3315,6 +3317,27 @@ class Handler(BaseHTTPRequestHandler):
         if not origin:
             return self.send({'error': 'Invalid host'}, status=403)
         url = urllib.parse.urlsplit(self.path)
+        if url.path == '/open':
+            # A single-use link from the launcher, used on Linux where Snap browsers can't
+            # read the handoff file. The link appears in other users' process lists, so
+            # only a connection owned by this user may redeem it.
+            now = time.time()
+            code = urllib.parse.parse_qs(url.query).get('code', [''])[0]
+            owner = local_session.connection_uid(self.client_address[1], self.server.server_port)
+            with self.server.handoff_lock:
+                valid = owner == os.getuid() and local_session.redeem_handoff(
+                    self.server.session_secret, self.server.server_port, code, self.server.handoffs, now=now)
+            if not valid:
+                return self.send(b'This KoShelf link has expired or was already used. Run koshelf --browser again.',
+                                 'text/plain; charset=utf-8', status=403)
+            # A redirect replaces the link in the tab's history, so Back never returns to it.
+            self.send_response(303)
+            self.send_header('Location', '/#session=' + self.server.session_secret)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
         if url.path == '/api/identity':
             identity = {'app': 'KoShelf', 'version': 3}
             challenge = urllib.parse.parse_qs(url.query).get('challenge', [])
@@ -3324,6 +3347,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith('/api/') and not self.is_authorized(origin):
             return self.send({'error': 'Open KoShelf to start a new local session.'}, status=403)
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+                  '/favicon.ico': ('koshelf-icon.png', 'image/png'),
                   '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/style.css': ('style.css', 'text/css; charset=utf-8'),
                   '/koshelf-icon.png': ('koshelf-icon.png', 'image/png')}
@@ -3335,7 +3359,8 @@ class Handler(BaseHTTPRequestHandler):
                 documents = kindle_documents()
                 return self.send({'device': kindle_delivery.device_token(documents) if documents else None,
                                   'name': documents.parent.name if documents else None,
-                                  'converter': bool(kindle_delivery.converter())})
+                                  'converter': bool(kindle_delivery.converter()),
+                                  'sandboxed': kindle_delivery.sandbox_available()})
             except (OSError, ValueError) as exc:
                 return self.send({'error': str(exc)}, status=400)
         if url.path in {'/api/fonts', '/api/font-preview'}:
@@ -3600,14 +3625,65 @@ class Handler(BaseHTTPRequestHandler):
             self.send({'error': str(exc)}, status=400)
 
 
+def default_state_directory():
+    """Where KoShelf keeps its data, shared by the desktop app and the browser service."""
+    if os.sys.platform == 'darwin':
+        return Path.home() / 'Library' / 'Application Support' / 'KoShelf'
+    base = os.environ.get('XDG_STATE_HOME')
+    return (Path(base) if base and Path(base).is_absolute() else Path.home() / '.local' / 'state') / 'koshelf'
+
+
+SERVICE_ALREADY_RUNNING = 75  # EX_TEMPFAIL; the desktop app shows its own message for it.
+STATE_FOLDER_UNUSABLE = 78  # EX_CONFIG
+
+
+def exit_with_parent(server, interval=1.0):
+    """Stop the desktop app's service if the app crashes or is force-quit.
+
+    Otherwise the orphaned service would keep the data folder locked.
+    """
+    parent = os.getppid()
+
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(interval)
+        server.shutdown()
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def lock_state_directory(folder):
+    """Keep a second KoShelf service from writing to the same data folder."""
+    import fcntl
+    private_state_directory(folder, create=True)
+    fd = os.open(folder / 'service.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
 def main():
-    global ROOT, LOCAL_FIRST
+    global ROOT, LOCAL_FIRST, JOURNAL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, help='Books folder, on the Kindle or your computer')
     parser.add_argument('--port', type=int, default=0, help='Local port for the interface (default: any free port)')
     parser.add_argument('--open', action='store_true', help='Open your default browser')
     parser.add_argument('--session-pipe', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if 'KOSHELF_STATE_DIR' not in os.environ:
+        JOURNAL = default_state_directory() / 'moves.jsonl'
+    try:
+        lock = lock_state_directory(JOURNAL.parent)
+    except (OSError, ValueError) as exc:
+        print(f'KoShelf cannot use its data folder {JOURNAL.parent}: {exc}', file=sys.stderr)
+        sys.exit(STATE_FOLDER_UNUSABLE)
+    if lock is None:
+        print('KoShelf is already open, either as the app or in a browser, and is using '
+              f'{JOURNAL.parent}. Switch to that one, or quit it first. '
+              'Run koshelf --browser to reopen a browser session that is already running.', file=sys.stderr)
+        sys.exit(SERVICE_ALREADY_RUNNING)
     LOCAL_FIRST = args.library is None
     if args.library:
         if args.library.is_dir(): select_library(args.library)
@@ -3622,6 +3698,7 @@ def main():
             local_session.forget_redirect_later(local_session.open_browser(server.server_port, server.session_secret))
         print(f'KoShelf: http://127.0.0.1:{server.server_port}', flush=True)
         if args.session_pipe:
+            exit_with_parent(server)
             print('KoShelf session: ' + local_session.session_url(server.server_port, server.session_secret), flush=True)
         else:
             print('Local library organizer. Press Control-C to stop.', flush=True)

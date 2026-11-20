@@ -183,7 +183,8 @@
 </dialog>
 <dialog id="kindle-delivery-dialog" aria-labelledby="kindle-delivery-heading">
   <h2 id="kindle-delivery-heading">Send to Kindle over USB</h2>
-  <p>KoShelf converts your EPUBs on this Mac into AZW3 copies for the Kindle reader. Your original EPUBs stay in your library.</p>
+  <p>KoShelf converts your EPUBs on this computer into AZW3 copies for the Kindle reader. Your original EPUBs stay in your library.</p>
+  <p id="kindle-delivery-warning" class="delivery-warning" role="note" hidden>The converter runs without a sandbox on this system. KoShelf can only sandbox it on macOS so far; Linux sandboxing is on the roadmap. The converter can read and write your files and use the network while it runs, so only convert EPUBs you trust.</p>
   <ul id="kindle-delivery-books" class="transfer-paths"></ul>
   <p id="kindle-delivery-status" role="status"></p>
   <progress id="kindle-delivery-progress" aria-label="Books processed" hidden></progress>
