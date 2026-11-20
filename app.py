@@ -2738,6 +2738,140 @@ def move_epub(source, destination, base):
     return {'source': source_rel, 'path': event['destination'], 'folder': folder_rel, 'withSidecar': event['sidecar'], 'warning': warning}
 
 
+APPLEDOUBLE_MAGIC = b'\x00\x05\x16\x07'
+LEFTOVER_BACKUP = re.compile(r'^(?P<stem>.+) \(backup (?P<hash>[0-9a-f]{16})\)(?P<suffix>\.[^./]+)$')
+DATALESS = getattr(statmod, 'SF_DATALESS', 0x40000000)
+
+
+def cleanup_libraries():
+    """The Mac library and, when configured, the iCloud Drive folder."""
+    roots = {'mac': cleanup_root()}
+    status = icloud_status()
+    if status['available']:
+        roots['icloud'] = icloud_folder(status['path'])
+    return roots
+
+
+def sync_leftovers(roots):
+    """Find files that earlier releases left behind during Kindle sync.
+
+    - AppleDouble files (``._Name``) copied from the Kindle's FAT drive. They
+      only hold Finder metadata and are recognized by their file signature.
+    - ``Name (backup <hash>)`` copies whose contents match the hash in the name
+      and whose original sits beside them. A copy without its original is left
+      alone, because it may be the only copy of that book.
+    """
+    found, kept = [], []
+    for key, root in roots.items():
+        device = root.lstat().st_dev
+        for base, dirs, files in os.walk(root, followlinks=False):
+            base = Path(base)
+            dirs[:] = [name for name in dirs if not (base / name).is_symlink()
+                       and (base / name).lstat().st_dev == device and not system_junk(name)]
+            for name in files:
+                path = base / name
+                try:
+                    info = path.lstat()
+                except OSError:
+                    continue
+                if not statmod.S_ISREG(info.st_mode) or info.st_dev != device or info.st_flags & DATALESS:
+                    continue
+                relative = path.relative_to(root).as_posix()
+                if name.startswith('._'):
+                    try:
+                        with open_regular(path) as stream:
+                            if stream.read(4) != APPLEDOUBLE_MAGIC:
+                                continue
+                    except (OSError, ValueError):
+                        continue
+                    found.append({'library': key, 'path': relative, 'kind': 'appledouble',
+                                  'size': info.st_size, 'identity': [info.st_ino, info.st_mtime_ns]})
+                    continue
+                match = LEFTOVER_BACKUP.match(name)
+                if not match:
+                    continue
+                original = path.with_name(match['stem'] + match['suffix'])
+                digest = file_digest(path)
+                if not digest.startswith(match['hash']):
+                    continue
+                if original.is_symlink() or not original.is_file():
+                    kept.append({'library': key, 'path': relative})
+                    continue
+                found.append({'library': key, 'path': relative, 'kind': 'backup', 'size': info.st_size,
+                              'digest': digest, 'original': original.relative_to(root).as_posix(),
+                              'identity': [info.st_ino, info.st_mtime_ns]})
+    found.sort(key=lambda item: (item['library'], item['kind'], item['path']))
+    return found, kept
+
+
+def move_verified(source, destination, digest):
+    """Move a file into private state, verifying the copy before removing the source."""
+    if os.path.lexists(destination):
+        if destination.is_symlink() or not destination.is_file() or file_digest(destination) != digest:
+            raise ValueError('A different file already occupies the recovery location.')
+        source.unlink()
+        return
+    with tempfile.NamedTemporaryFile(prefix='.koshelf-move-', dir=destination.parent, delete=False) as output:
+        temporary = Path(output.name)
+        try:
+            with open_regular(source) as stream:
+                shutil.copyfileobj(stream, output)
+            output.flush()
+            os.fsync(output.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        if file_digest(temporary) != digest:
+            raise ValueError('The recovery copy failed verification.')
+        rename_exclusive(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    source.unlink()
+
+
+def clean_sync_leftovers(review=None):
+    """Preview, then move sync leftovers out of the libraries into private state."""
+    roots = cleanup_libraries()
+    found, kept = sync_leftovers(roots)
+    identities = {key: [root.lstat().st_dev, root.lstat().st_ino] for key, root in roots.items()}
+    token = hashlib.sha256(json.dumps([identities, found]).encode()).hexdigest()
+    if review is None:
+        return {'review': token, 'items': found, 'kept': kept,
+                'libraries': {key: str(root) for key, root in roots.items()}}
+    if review != token:
+        raise ValueError('The libraries changed during review. Open the cleanup again.')
+    run = uuid.uuid4().hex
+    result = {'moved': 0, 'failed': 0, 'errors': [], 'recovery': None}
+    for item in found:
+        try:
+            root = roots[item['library']]
+            path = backup_alignment_path(root, item['path'])
+            info = path.lstat()
+            if not statmod.S_ISREG(info.st_mode) or [info.st_ino, info.st_mtime_ns] != item['identity']:
+                raise ValueError('The file changed during review.')
+            digest = file_digest(path)
+            if item['kind'] == 'backup' and item['library'] == 'mac':
+                # Keep Mac-side Kindle versions where sync looks for them.
+                destination = sync_version_path(item['original'], digest, create=True)
+            else:
+                parts = PurePosixPath(item['path']).parts
+                folder = private_state_subdirectory(JOURNAL.parent, 'library-cleanup', run, item['library'], *parts[:-1])
+                destination = folder / parts[-1]
+                result['recovery'] = str(JOURNAL.parent / 'library-cleanup' / run)
+            if item['kind'] == 'backup' and digest != item['digest']:
+                raise ValueError('The file changed during review.')
+            move_verified(path, destination, digest)
+            result['moved'] += 1
+        except (OSError, ValueError, KeyError) as exc:
+            result['failed'] += 1
+            if len(result['errors']) < 5:
+                result['errors'].append(f"{item['path']}: {exc}")
+    journal({'operation': 'clean-sync-leftovers', 'library': str(roots['mac']), 'run': run,
+             'moved': result['moved'], 'failed': result['failed'], 'status': 'completed'})
+    return result
+
+
 class LocalServer(ThreadingHTTPServer):
     # Wait for active file requests on shutdown instead of abandoning a move.
     daemon_threads = False
@@ -3115,7 +3249,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send(import_epub(urllib.parse.parse_qs(url.query, keep_blank_values=True), upload, size))
             except (OSError, ValueError, KeyError) as exc:
                 return self.send({'error': str(exc)}, status=400)
-        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup'} or self.headers.get('Content-Type') != 'application/json':
+        if self.path not in {'/api/library', '/api/folders', '/api/move', '/api/eject', '/api/remove-folder', '/api/metadata', '/api/backup', '/api/sync', '/api/send-to-kindle', '/api/duplicate-archive', '/api/import-preview', '/api/sync-undo', '/api/sync-leftovers', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-setup', '/api/icloud-sync', '/api/epub-split', '/api/reading-status', '/api/kindle-setup'} or self.headers.get('Content-Type') != 'application/json':
             return self.send({'error': 'Unsupported request'}, status=400)
         try:
             limit = 512 * 1024 if self.path in {'/api/sync', '/api/genre-cleanup-preview', '/api/metadata-cleanup-apply', '/api/icloud-sync'} else 8192
@@ -3162,6 +3296,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(apply_metadata_cleanup(body))
                 if self.path == '/api/genre-cleanup-preview':
                     return self.send(genre_cleanup_preview(body))
+                if self.path == '/api/sync-leftovers':
+                    return self.send(clean_sync_leftovers(body.get('review')))
                 if self.path == '/api/sync-undo':
                     return self.send(undo_sync_action(body['run'], body['action']))
                 if self.path == '/api/import-preview':

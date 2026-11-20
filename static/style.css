@@ -286,7 +286,7 @@ main{
   white-space: nowrap;
 }
 
-#sync-history-dialog, #library-health-dialog {
+#sync-history-dialog, #library-health-dialog, #sync-leftovers-dialog {
   width: min(680px, 92vw);
 }
 

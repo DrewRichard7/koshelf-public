@@ -162,6 +162,7 @@ function renderConnection() {
   $('open-icloud-sync').disabled = busy || loading || !library.connected || !onMac;
   $('open-library-health').disabled = busy || loading || !library.connected;
   $('open-genre-cleanup').disabled = busy || loading || !library.connected || !onMac;
+  $('open-sync-leftovers').disabled = busy || loading || !library.connected || !onMac;
   $('find-duplicates').disabled=busy||loading||!library.connected||!library.books.length;
   renderSelection();
   $('backup').hidden=!workflow&&local&&!device.kindle&&(onMac||!library.canEject);
@@ -1246,6 +1247,91 @@ $('open-library-health').onclick = async () => {
     }
   } catch (error) {
     status.textContent = error.message;
+  }
+};
+
+let leftoverReview = null;
+
+function renderSyncLeftovers(preview) {
+  const results = $('sync-leftovers-results');
+  const names = {mac: 'Mac library', icloud: 'iCloud Drive folder'};
+  const groups = [
+    ['appledouble', 'Hidden ._ files copied from the Kindle'],
+    ['backup', 'Backup copies next to their original'],
+  ];
+  results.replaceChildren();
+  for (const [kind, label] of groups) {
+    for (const key of Object.keys(preview.libraries)) {
+      const items = preview.items.filter(item => item.kind === kind && item.library === key);
+      if (!items.length) continue;
+      const group = el('details', null, 'duplicate-card');
+      group.append(el('summary', `${label} · ${names[key] || key} · ${items.length}`));
+      const list = el('ul', null, 'transfer-paths');
+      list.append(...items.slice(0, 200).map(item => el('li', item.path)));
+      if (items.length > 200) list.append(el('li', `And ${items.length - 200} more`));
+      group.append(list);
+      results.append(group);
+    }
+  }
+  if (preview.kept.length) {
+    const group = el('details', null, 'duplicate-card');
+    group.append(el('summary', `Left in place because the original is missing · ${preview.kept.length}`),
+      el('p', 'These copies may be the only copy of a book, so KoShelf leaves them on your shelf.'));
+    const list = el('ul', null, 'transfer-paths');
+    list.append(...preview.kept.map(item => el('li', item.path)));
+    group.append(list);
+    results.append(group);
+  }
+}
+
+async function previewSyncLeftovers() {
+  const status = $('sync-leftovers-status');
+  const apply = $('apply-sync-leftovers');
+  apply.hidden = true;
+  leftoverReview = null;
+  $('sync-leftovers-results').replaceChildren();
+  status.textContent = 'Looking for leftovers…';
+  try {
+    const preview = await mutation('/api/sync-leftovers', {}, {updateStorage: false});
+    leftoverReview = preview.review;
+    renderSyncLeftovers(preview);
+    status.textContent = preview.items.length
+      ? `${preview.items.length} files to move. Review the lists, then move them.`
+      : 'No sync leftovers found.';
+    apply.hidden = !preview.items.length;
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+$('open-sync-leftovers').onclick = () => {
+  if (busy || loading || !library.connected || library.root !== library.macRoot) return;
+  $('shelf-actions').open = false;
+  $('sync-leftovers-dialog').showModal();
+  void previewSyncLeftovers();
+};
+
+$('apply-sync-leftovers').onclick = async () => {
+  if (!leftoverReview || busy) return;
+  const status = $('sync-leftovers-status');
+  const apply = $('apply-sync-leftovers');
+  apply.disabled = true;
+  setBusy(true);
+  status.textContent = 'Moving files to the recovery folder…';
+  try {
+    const result = await mutation('/api/sync-leftovers', {review: leftoverReview});
+    leftoverReview = null;
+    apply.hidden = true;
+    $('sync-leftovers-results').replaceChildren(...result.errors.map(message => el('p', message)));
+    status.textContent = result.failed
+      ? `Moved ${result.moved} files. ${result.failed} could not be moved and were left in place.`
+      : `Moved ${result.moved} files to KoShelf’s recovery folder.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    apply.disabled = false;
+    setBusy(false);
+    render();
   }
 };
 
