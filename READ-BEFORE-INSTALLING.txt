@@ -11,8 +11,10 @@ so keep a separate backup of your library before using it.
 KoShelf has been tested on Apple silicon Macs only. The Intel build is
 included but untested.
 
-The app uses an ad hoc signature. macOS may show a Gatekeeper warning
-the first time you open it.
+The app is signed with the developer's own certificate, not an Apple
+Developer ID, so macOS may show a Gatekeeper warning the first time you
+open it. Apple Books features need Full Disk Access; later KoShelf
+updates signed with the same certificate keep that permission.
 
 To open it the first time, Control-click KoShelf and choose Open.
 Don't turn off Gatekeeper for your whole Mac.
