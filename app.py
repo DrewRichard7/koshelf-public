@@ -1194,6 +1194,9 @@ def backup_book_index(root, sizes=None):
     return index
 
 
+BACKUP_COPY = re.compile(r'.+ \(backup [0-9a-f]{16}\)')
+
+
 def backup_conflicts(root, target, *, two_way=False):
     if not target.exists():
         return []
@@ -1201,25 +1204,27 @@ def backup_conflicts(root, target, *, two_way=False):
     mac = backup_book_index(target, kindle)
     groups = []
     for size, copies in mac.items():
-        # Without a path in another folder there is no move to consider.
-        if len({p.parent.relative_to(base) for base, paths in
+        # Without a path under another name or folder there is no move to consider.
+        if len({p.relative_to(base).as_posix().casefold() for base, paths in
                 [(root, kindle[size]), (target, copies)] for p in paths}) < 2:
             continue
         by_digest = {}
         for side, base, paths in [('kindle', root, kindle[size]), ('backup', target, copies)]:
             for path in paths:
+                if BACKUP_COPY.fullmatch(path.stem):
+                    continue  # A saved version, not the same book under a new name.
                 digest = sync_digest(path, path.stat())
                 by_digest.setdefault(digest, {'kindle': [], 'backup': []})[side].append(
                     path.relative_to(base).as_posix()
                 )
         for digest, paths in by_digest.items():
             old = set(paths['backup'])
-            missing = set(paths['kindle']) - old
-            kindle_paths = set(paths['kindle'])
-            moved_to_kindle = any(Path(a).parent != Path(b).parent for a in missing for b in old)
-            moved_to_mac = two_way and any(
-                Path(a).parent != Path(b).parent for a in old - kindle_paths for b in kindle_paths
-            )
+            folded = {path.casefold() for path in old}
+            kindle_folded = {path.casefold() for path in paths['kindle']}
+            missing = [path for path in paths['kindle'] if path.casefold() not in folded]
+            moved_to_kindle = bool(missing and old)
+            moved_to_mac = two_way and bool(paths['kindle']) and any(
+                path.casefold() not in kindle_folded for path in old)
             if moved_to_kindle or moved_to_mac:
                 groups.append({'digest': digest, 'kindle': sorted(paths['kindle']), 'backup': sorted(old)})
     return sorted(groups, key=lambda group: group['kindle'])
@@ -2180,7 +2185,47 @@ def empty_folder_removal_plan(mac, kindle):
     return plan
 
 
-def sync_libraries(kindle, choice=None, review=None, use_mac=None):
+def matching_title(mac, group):
+    try:
+        return metadata(backup_alignment_path(mac, group['mac'][0]), load_cover=False)['title']
+    except (OSError, ValueError, KeyError, IndexError):
+        return PurePosixPath(group['mac'][0]).stem if group['mac'] else ''
+
+
+def reading_settings_file(path):
+    """KOReader's main reading file in a book's .sdr folder, such as metadata.epub.lua."""
+    parts = PurePosixPath(path).parts
+    return (len(parts) >= 2 and parts[-2].lower().endswith('.sdr')
+            and re.fullmatch(r'metadata\.[a-z0-9]+\.lua', parts[-1], re.IGNORECASE) is not None)
+
+
+def reading_settings_backup(path):
+    """KOReader's own backup of a reading file, such as metadata.epub.lua.old."""
+    return path.endswith('.lua.old') and reading_settings_file(path[:-len('.old')])
+
+
+def reading_fraction(settings):
+    """How far into the book a reading file is, from 0 to 1, or None if unknown."""
+    reading = parse_koreader_reading(settings)
+    if reading.get('readingStatus') == 'complete':
+        return 1.0
+    return reading.get('readingProgress')
+
+
+def copy_reading_file(source, destination, digest, relative):
+    """Replace a reading file after saving the version it replaces for recovery."""
+    if destination.is_symlink() or not destination.is_file():
+        raise ValueError('The reading file moved during sync.')
+    old_digest = file_digest(destination)
+    recovery = sync_version_path(relative, old_digest, create=True)
+    if not recovery.exists():
+        sync_restore_copy(destination, recovery, old_digest)
+    elif recovery.is_symlink() or file_digest(recovery) != old_digest:
+        raise ValueError('A conflicting recovery copy exists.')
+    sync_restore_copy(source, destination, digest, replace_digest=old_digest)
+
+
+def sync_libraries(kindle, choice=None, review=None, use_mac=None, moves=None):
     mac = mac_library()
     identity = kindle.stat()
     send = kindle_import_plan(mac, kindle)
@@ -2191,6 +2236,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     incoming_folders = []
     conflicts = []
     epub_conflicts = {}
+    reading_plan = {}
     signatures = []
     reviewed_files = {}
     mac_device = mac.stat().st_dev
@@ -2233,6 +2279,18 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                 saved = sync_digest(destination, destination_info)
                 if saved == checksum:
                     continue
+                if reading_settings_backup(path):
+                    # KOReader's own backup simply follows the Kindle.
+                    reading_plan[path] = {'winner': 'kindle', 'kindle': None, 'mac': None,
+                                          'digests': [checksum, saved], 'hidden': True}
+                    continue
+                if reading_settings_file(path):
+                    on_kindle, on_mac = reading_fraction(source), reading_fraction(destination)
+                    if on_kindle is not None and on_mac is not None:
+                        # Whichever copy is further along wins; the Kindle wins a tie.
+                        reading_plan[path] = {'winner': 'mac' if on_mac > on_kindle else 'kindle',
+                                              'kindle': on_kindle, 'mac': on_mac, 'digests': [checksum, saved]}
+                        continue
                 if (source.suffix.lower() == '.epub' and not source.name.startswith('.')
                         and not any(part.startswith('.') or part.lower().endswith('.sdr')
                                     for part in PurePosixPath(path).parts[:-1])
@@ -2246,6 +2304,13 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                 incoming.append(path)
                 signatures.append((path, checksum, None))
 
+    # Books that match by content are listed with their own choices, not as new files.
+    matched = set()
+    for group in backup.get('groups', []):
+        for path in group['kindle']:
+            matched.update([path, str(PurePosixPath(path).with_suffix('.sdr')) + '/'])
+    incoming = [path for path in incoming
+                if path not in matched and not any(path.startswith(prefix) for prefix in matched if prefix.endswith('/'))]
     status_plan = status_sync_plan(mac, kindle, send)
     remove_folders = empty_folder_removal_plan(mac, kindle)
     incoming_folders = [path for path in incoming_folders if path not in remove_folders]
@@ -2257,7 +2322,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     mac_newer = sorted(path for path, (kindle_digest, _) in epub_conflicts.items()
                        if stale_after_mac_edit(path, kindle_digest, edits, reverted))
     choosable = [path for path in epub_conflicts if path not in mac_newer]
-    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders, mac_newer]).encode()).hexdigest()
+    token = hashlib.sha256(json.dumps([backup['review'], send, signatures, epub_conflicts, duplicate_plan, status_plan, remove_folders, incoming_folders, mac_newer, reading_plan]).encode()).hexdigest()
     if choice is None:
         conflicts = [path for path in conflicts if path not in mac_newer]
         review_conflicts = sorted((set(conflicts) | epub_conflicts.keys()) - set(mac_newer))
@@ -2269,7 +2334,11 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
                 'epubConflictPaths': choosable, 'macNewerPaths': mac_newer,
                 'epubComparisons': {path: compare_epub_versions(mac / path, kindle / path)
                                     for path in choosable},
-                'versionDifferenceCount': len(review_conflicts), 'versionDifferencePaths': review_conflicts[:100]}
+                'versionDifferenceCount': len(review_conflicts), 'versionDifferencePaths': review_conflicts[:100],
+                'readingProgress': [{'path': path, 'book': PurePosixPath(path).parent.stem, 'winner': plan['winner'],
+                                     'kindle': plan['kindle'], 'mac': plan['mac']}
+                                    for path, plan in sorted(reading_plan.items()) if not plan.get('hidden')][:100],
+                'moveGroups': [{**group, 'title': matching_title(mac, group)} for group in backup.get('groups', [])]}
     if review != token:
         raise ValueError('The libraries changed during review. Open Sync libraries again.')
 
@@ -2287,7 +2356,7 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
     history = SyncHistory('Sync libraries')
     result = backup_library(source=kindle, choice=choice, review=backup['review'],
                             two_way=True, archived=archived, history=history, skip_folders=remove_folders,
-                            reviewed_files=reviewed_files)
+                            reviewed_files=reviewed_files, moves=moves, skip_files=reading_plan)
     # Folder alignment may make a reviewed destination obsolete. Only send
     # files from the original plan, and recheck their contents during copying.
     replacements = {}
@@ -2336,6 +2405,28 @@ def sync_libraries(kindle, choice=None, review=None, use_mac=None):
             entry = archive_epub(kindle, keeper, source, digest, keep_digest)
             sent['archived'] += 1
             history.record('archived', kindle, source, digest, backup=entry['archivePath'])
+        except (OSError, ValueError) as exc:
+            sent['failed'] += 1
+            if len(sent['errors']) < 5:
+                sent['errors'].append(f'{path}: {exc}')
+    sent['readingProgress'] = 0
+    for path, plan in reading_plan.items():
+        try:
+            current = kindle.stat()
+            if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+                raise ValueError('The Kindle changed during sync.')
+            on_kindle = backup_alignment_path(kindle, path)
+            on_mac = backup_alignment_path(mac, path)
+            kindle_digest, mac_digest = plan['digests']
+            if (on_kindle.is_symlink() or on_mac.is_symlink()
+                    or file_digest(on_kindle) != kindle_digest or file_digest(on_mac) != mac_digest):
+                raise ValueError('The reading file changed during sync. Review sync again.')
+            if plan['winner'] == 'kindle':
+                copy_reading_file(on_kindle, on_mac, kindle_digest, path)
+            else:
+                copy_reading_file(on_mac, on_kindle, mac_digest, path)
+            if not plan.get('hidden'):
+                sent['readingProgress'] += 1
         except (OSError, ValueError) as exc:
             sent['failed'] += 1
             if len(sent['errors']) < 5:
@@ -2393,7 +2484,7 @@ def kindle_status(root):
 
 
 def backup_library(destination=None, choice=None, review=None, *, source=None, preview=False, two_way=False,
-                   archived=None, history=None, skip_folders=(), reviewed_files=None):
+                   archived=None, history=None, skip_folders=(), reviewed_files=None, moves=None, skip_files=()):
     report_progress()
     """Copy a library snapshot without overwriting its existing backup files."""
     root = library_path('', allow_root=True) if source is None else source
@@ -2412,7 +2503,7 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
     if paths_overlap(target, root):
         raise ValueError('The backup folder and the library must be separate.')
     if target.is_symlink(): raise ValueError('The backup folder must not be a symbolic link.')
-    if choice not in {None, 'kindle', 'backup', 'merge', 'copy'}:
+    if choice not in {None, 'kindle', 'backup', 'merge', 'copy', 'align'}:
         raise ValueError('Choose a backup option.')
     archived = archived or {}
     conflicts = [
@@ -2431,10 +2522,18 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
         raise ValueError('The library or backup changed during review. Start the backup again.')
     if conflicts and choice == 'copy':
         raise ValueError('Choose how to handle the matching EPUBs.')
+    if choice == 'align':
+        # Each matching book gets its own choice of name and folder.
+        moves = moves if isinstance(moves, dict) else {}
+        if any(len(group['kindle']) == 1 and len(group['backup']) == 1
+               and moves.get(group['digest']) not in {'kindle', 'backup'} for group in conflicts):
+            raise ValueError('Choose a name and folder for each matching book.')
     if preview or (conflicts and choice is None):
         return {'review': token, 'count': len(conflicts), 'examples': [
             {side: group[side][:3] for side in ('kindle', 'backup')} for group in conflicts[:5]
-        ]}
+        ], 'groups': [{'id': group['digest'], 'kindle': group['kindle'][:3], 'mac': group['backup'][:3],
+                       'single': len(group['kindle']) == 1 and len(group['backup']) == 1}
+                      for group in conflicts[:100]]}
     target.mkdir(parents=True, exist_ok=True)
     target_stat = target.lstat()
     device = root_stat.st_dev
@@ -2444,14 +2543,15 @@ def backup_library(destination=None, choice=None, review=None, *, source=None, p
         result['failed'] += 1
         if len(result['errors']) < 5: result['errors'].append(f'{path}: {exc}')
 
-    excluded = set()
-    if choice in {'kindle', 'backup'}:
+    excluded = {PurePosixPath(path) for path in skip_files}
+    if choice in {'kindle', 'backup', 'align'}:
         for group in conflicts:
             try:
                 if len(group['kindle']) != 1 or len(group['backup']) != 1:
                     raise ValueError('Multiple copies already exist. Left all copies in place.')
                 validate_source()
-                base, source, destination = align_backup_book(root, target, group, choice)
+                side = moves[group['digest']] if choice == 'align' else choice
+                base, source, destination = align_backup_book(root, target, group, side)
                 result['moved'] += 1
                 if base == root and reviewed_files is not None:
                     # The user's location choice can also move a companion folder.
@@ -3413,7 +3513,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send(send_to_kindle(kindle, body.get('review')))
                     choice = body.get('choice')
                     try:
-                        return self.send(sync_libraries(kindle, choice, body.get('review'), body.get('useMac')))
+                        return self.send(sync_libraries(kindle, choice, body.get('review'), body.get('useMac'), body.get('moves')))
                     finally:
                         DIGESTS.save()
                 if self.path == '/api/eject':

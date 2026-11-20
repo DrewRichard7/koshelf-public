@@ -8,6 +8,9 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 - [ ] **Author and award-tag cleanup.** Suggest author aliases and cleanup of award labels.
 - [ ] **Three-way library review.** Include the connected Kindle in the Mac and iCloud Drive review, so all three libraries are reviewed in one run. Verify the iPhone-to-Kindle workflow.
 - [ ] **MTP Kindle delivery.** Explore USB delivery on macOS to Kindle models that use MTP instead of mounting as a drive.
+- [ ] **Set reading progress manually.** Let the book details set a reading percentage, not only a status, so progress from reading elsewhere can win the next sync.
+- [ ] **Apple Books reading progress.** Find out whether Apple Books exposes reading positions, and if it does, sync them with KOReader progress.
+- [ ] **KOReader progress on Mac and iPhone.** Look into syncing progress with KOReader on other devices, for example through KOReader's progress sync server.
 - [ ] **Selective sync.** Let a sync review skip individual changes or whole categories (copies to Mac, copies to Kindle, replacements, reading statuses, folder removals), so applying a review isn't all or nothing.
 - [ ] **In-app updates.** Check for new releases and install them without downloading a new disk image each time. If a full download is unavoidable, make updating simpler than Calibre's.
 - [ ] **Linux support.** Make KoShelf work fully on Linux, including Kindle detection, eject, and the Kindle converter.

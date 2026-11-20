@@ -147,15 +147,11 @@
     <details class="backup-paths"><summary id="sync-to-kindle"></summary><ul id="sync-to-kindle-paths" class="transfer-paths"></ul></details>
     <details id="sync-mac-newer-group" class="backup-paths" hidden><summary id="sync-mac-newer"></summary><ul id="sync-mac-newer-paths" class="transfer-paths"></ul></details>
     <section id="sync-folders" hidden>
-      <details class="backup-paths"><summary id="sync-folder-count"></summary><ul id="sync-folder-paths" class="transfer-paths"></ul></details>
-      <label for="sync-folder-choice">How should matching books be organized?</label>
-      <select id="sync-folder-choice" class="field">
-        <option value="kindle">Match Kindle folders</option>
-        <option value="backup">Match Mac folders</option>
-        <option value="merge">Keep both locations</option>
-      </select>
-      <p class="hint">Folder choices can change the transfer counts above. KOReader companion folders move with their books. Ambiguous moves are left in place and reported.</p>
+      <h3 id="sync-folder-count" class="sync-section-heading"></h3>
+      <p class="hint">These files are identical on both devices but have different names or folders. Choose which one to keep for each book. KOReader companion folders move with their books.</p>
+      <div id="sync-move-choices"></div>
     </section>
+    <details id="sync-reading-progress" class="backup-paths" hidden><summary id="sync-reading-progress-count"></summary><div id="sync-reading-progress-paths" class="sync-progress-list"></div><p class="hint">The copy that is further along wins. KoShelf saves the other copy in its private recovery folder.</p></details>
     <details id="sync-empty-folders" class="backup-paths" hidden><summary id="sync-empty-folder-count"></summary><ul id="sync-empty-folder-paths" class="transfer-paths"></ul></details>
     <details id="sync-reading-status" class="backup-paths" hidden><summary id="sync-reading-count"></summary><ul id="sync-reading-paths" class="transfer-paths"></ul></details>
     <section id="sync-duplicate-archive" hidden>
