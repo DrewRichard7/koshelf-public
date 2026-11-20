@@ -21,7 +21,5 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 
 ## Maintenance
 
-- [ ] Prune or cap `sync-versions/` in the state folder. KOReader reading files change on every reading session, so their recovery copies build up.
-- [ ] Skip the full library rescan when the window regains focus and nothing has changed.
-- [ ] Add a memory watchdog for the Kindle converter, in addition to its sandbox, `GOMEMLIMIT`, and timeout.
 - [ ] Before Go 1.28 ships (expected around February 2027), decide whether to raise the minimum to macOS 13. Go 1.27 and later require macOS 13, and Go 1.26 stops receiving fixes then.
+- [ ] Clean up repository structure: main code in src/ directory, test files in tests/ directory, artifacts in artifacts/ directory, etc.

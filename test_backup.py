@@ -322,6 +322,49 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(archived.stat().st_mode & 0o077, 0)
         self.assertEqual((self.base / 'sync-versions').stat().st_mode & 0o077, 0)
 
+    def test_sync_keeps_only_recent_copies_of_reading_files(self):
+        self.destination.mkdir()
+        self.put('Book.epub', b'Kindle edition')
+        (self.destination / 'Book.epub').write_bytes(b'Mac edition')
+        (self.destination / 'Book.sdr').mkdir()
+        (self.destination / 'Book.sdr/metadata.epub.lua').write_bytes(b'Mac progress')
+        with patch.object(app, 'mac_library', return_value=self.destination):
+            for session in range(app.MAX_READING_VERSIONS + 3):
+                self.put('Book.sdr/metadata.epub.lua', f'Kindle progress {session}'.encode())
+                preview = app.sync_libraries(self.root)
+                app.sync_libraries(self.root, 'copy', preview['review'])
+            # The newest Kindle reading file is still saved, so sync is settled.
+            self.assertEqual(app.sync_libraries(self.root)['conflicts'], 0)
+        versions = self.base / 'sync-versions'
+        kept = sorted(path.read_bytes() for path in (versions / 'Book.sdr').iterdir())
+        self.assertEqual(len(kept), app.MAX_READING_VERSIONS)
+        self.assertIn(f'Kindle progress {app.MAX_READING_VERSIONS + 2}'.encode(), kept)
+        self.assertNotIn(b'Kindle progress 0', kept)
+        # EPUB recovery copies are never pruned.
+        self.assertEqual([path.read_bytes() for path in versions.glob('Book (backup *).epub')], [b'Kindle edition'])
+
+    def test_pruning_keeps_the_version_the_kindle_returned_to(self):
+        # Copies built up before pruning existed, and the Kindle is back on the oldest one.
+        for session in range(app.MAX_READING_VERSIONS + 3):
+            content = f'Kindle progress {session}'.encode()
+            copy = app.sync_version_path('Book.sdr/metadata.epub.lua', hashlib.sha256(content).hexdigest(), create=True)
+            copy.write_bytes(content)
+        self.put('Book.sdr/metadata.epub.lua', b'Kindle progress 0')
+        self.assertEqual(app.prune_sync_versions(self.root), 2)
+        kept = [path.read_bytes() for path in (self.base / 'sync-versions/Book.sdr').iterdir()]
+        self.assertIn(b'Kindle progress 0', kept)
+        self.assertNotIn(b'Kindle progress 1', kept)
+
+    def test_sync_finishes_when_pruning_fails(self):
+        self.destination.mkdir()
+        self.put('Book.epub', b'new Kindle book')
+        (self.base / 'sync-history.jsonl').write_text('{"kind": "finish"}\n')
+        with patch.object(app, 'mac_library', return_value=self.destination), \
+                patch.object(app, 'prune_sync_versions', side_effect=KeyError('run')):
+            preview = app.sync_libraries(self.root)
+            result = app.sync_libraries(self.root, 'copy', preview['review'])
+        self.assertEqual(result['mac']['copied'], 1)
+
     def test_sync_skips_macos_metadata_files_from_the_kindle(self):
         self.destination.mkdir()
         self.put('Book.epub', b'same book')

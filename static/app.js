@@ -1824,18 +1824,22 @@ function details(b) {
   }
   $('detail').showModal();
 }
-async function readLibrary() {
-  const response=await shelfRequest('/api/library');
+async function readLibrary(ifChanged=false) {
+  // With ifChanged, the service answers with only a signature when the listing is the same.
+  const known=ifChanged&&library.connected&&library.signature;
+  const response=await shelfRequest(known?'/api/library?known='+encodeURIComponent(known):'/api/library');
   const data=await response.json();
   if(!response.ok)throw Error(data.error||'Could not read the library.');
+  if(data.unchanged)return false; // Also covers a library switched while this check ran.
   library=data;
   if(folder&&!library.folders.includes(folder))folder=null;
+  return true;
 }
-async function refresh() {
+async function refresh(ifChanged=false) {
   if (sessionExpired) { showSessionPrompt(); return; }
-  if(loading||busy)return; loading=true;$('notice').textContent='Reading your library…';
-  $('waiting-status').textContent='Finding your books…';
-  try { await readLibrary();render();$('notice').textContent=library.connected?'':library.root?'Library unavailable. Reconnect the Kindle or choose another folder.':''; }
+  if(loading||busy)return; loading=true;
+  if(!ifChanged){$('notice').textContent='Reading your library…';$('waiting-status').textContent='Finding your books…';}
+  try { if(await readLibrary(ifChanged))render();$('notice').textContent=library.connected?'':library.root?'Library unavailable. Reconnect the Kindle or choose another folder.':''; }
   catch(e){if(!sessionExpired){$('notice').textContent=e.message+' Check that the local application is running.';$('waiting-status').textContent='Connection lost · restart koshelf in your terminal';}}
   finally{loading=false;renderConnection();$('remove-folder').disabled=busy||!folder; $('new-folder').disabled=!library.connected||busy;if(library.connected)checkConnection().catch(()=>{});}
 }
@@ -1871,7 +1875,7 @@ window.addEventListener('focus', () => {
   comparedAt=0; // Files may have changed in Finder or on the Kindle while away.
   // Give the file picker time to deliver its selection before rescanning.
   setTimeout(() => {
-    if (library.connected && !shelfActions.open && !document.querySelector('dialog[open]')) refresh();
+    if (library.connected && !shelfActions.open && !document.querySelector('dialog[open]')) refresh(true);
   }, 300);
 });
 

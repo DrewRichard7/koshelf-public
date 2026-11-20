@@ -3,6 +3,7 @@ from collections import OrderedDict
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -109,10 +110,35 @@ class EpubSafetyTests(unittest.TestCase):
             archive.writestr('first.txt', b'0' * 2048)
             archive.writestr('second.txt', b'0' * 2048)
         with patch.object(kindle_delivery, 'MAX_CONVERSION', 3072):
-            with patch.object(kindle_delivery.subprocess, 'run') as run:
+            with patch.object(kindle_delivery, 'run_converter') as run:
                 with self.assertRaisesRegex(ValueError, 'uncompressed data'):
                     kindle_delivery.convert(self.path, self.path.with_suffix('.azw3'), '/converter')
                 run.assert_not_called()
+
+    def test_converter_is_stopped_when_memory_grows_too_large(self):
+        started = []
+        popen = subprocess.Popen
+
+        def start(*args, **kwargs):
+            started.append(popen(*args, **kwargs))
+            return started[-1]
+        with tempfile.TemporaryFile() as errors, \
+                patch.object(kindle_delivery, 'process_memory', return_value=kindle_delivery.MAX_CONVERTER_MEMORY + 1), \
+                patch.object(kindle_delivery.subprocess, 'Popen', side_effect=start):
+            with self.assertRaisesRegex(ValueError, 'too much memory'):
+                kindle_delivery.run_converter(['/bin/sleep', '30'], stderr=errors, cwd='/', env={})
+        self.assertIsNotNone(started[0].returncode)
+
+    def test_converter_memory_can_be_read(self):
+        self.assertGreater(kindle_delivery.process_memory(os.getpid()), 0)
+
+    def test_converter_runs_when_memory_cannot_be_read(self):
+        with patch.object(kindle_delivery, '_LIBPROC', None), \
+                patch.object(kindle_delivery.ctypes, 'CDLL', side_effect=OSError('missing')), \
+                tempfile.TemporaryFile() as errors:
+            if sys.platform == 'darwin':
+                self.assertIsNone(kindle_delivery.process_memory(os.getpid()))
+            self.assertEqual(kindle_delivery.run_converter(['/usr/bin/true'], stderr=errors, cwd='/', env={}), 0)
 
     def test_oversized_raster_hidden_under_another_filename(self):
         large_png = PNG[:16] + struct.pack('>II', 20000, 20000) + PNG[24:]
@@ -172,9 +198,9 @@ class EpubSafetyTests(unittest.TestCase):
             self.assertEqual(staged.read_bytes(), expected)
             self.assertEqual(destination, output)
             destination.write_bytes(b'\0' * 60 + b'BOOKMOBI' + b'\0' * 10)
-            return subprocess.CompletedProcess(args, 0)
+            return 0
 
-        with patch.object(kindle_delivery.subprocess, 'run', side_effect=run):
+        with patch.object(kindle_delivery, 'run_converter', side_effect=run):
             kindle_delivery.convert(self.path, output, '/converter')
         self.assertTrue(output.exists())
         self.assertEqual(set(output.parent.iterdir()), {self.path, output})
