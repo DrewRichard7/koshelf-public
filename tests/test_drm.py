@@ -5,7 +5,7 @@ import unittest
 import zipfile
 
 import kindle_delivery
-from test_app import epub
+from .test_app import epub
 
 ADOBE_DRM = '''<?xml version="1.0"?>
 <encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#">

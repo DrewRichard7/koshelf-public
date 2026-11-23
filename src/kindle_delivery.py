@@ -32,9 +32,11 @@ WATCHDOG_INTERVAL = 0.2
 
 def converter():
     resources = Path(__file__).resolve().parent
+    # In the app, the converter is in Contents/MacOS. In a checkout (src/), it is a build artifact.
+    artifacts = resources.parent / 'artifacts' / 'build'
     candidates = [resources.parent / 'MacOS' / CONVERTER_NAME] if resources.name == 'Resources' else [
-        resources / 'build' / 'KoShelf.app' / 'Contents' / 'MacOS' / CONVERTER_NAME,
-        resources / 'build' / CONVERTER_NAME,
+        artifacts / 'KoShelf.app' / 'Contents' / 'MacOS' / CONVERTER_NAME,
+        artifacts / CONVERTER_NAME,
     ]
     for path in candidates:
         if path.is_file() and os.access(path, os.X_OK):

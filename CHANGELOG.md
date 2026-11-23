@@ -2,6 +2,10 @@
 
 This file records notable changes to KoShelf, newest first. Planned work lives in [TODO.md](TODO.md). Release downloads are on the [releases page](https://github.com/DrewRichard7/koshelf-public/releases).
 
+## Unreleased
+
+- **Repository layout.** The Python code and web interface moved to `src/`, the tests to `tests/`, and build output to `artifacts/`. Old screenshots that showed a real library were removed.
+
 ## 1.3.0 · 2026-11-23
 
 - **Dark mode.** A sun-and-moon switch above the shelf flips between light and dark, and **Settings → Appearance** also offers System. System follows your computer's light or dark mode. The app and the browser version share the choice, and generated covers and charts follow it too.

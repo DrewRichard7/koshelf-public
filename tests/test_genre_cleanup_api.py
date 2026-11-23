@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app
-from test_app import CONTAINER, OPF
+from .test_app import CONTAINER, OPF
 
 
 class GenreCleanupPreviewTests(unittest.TestCase):

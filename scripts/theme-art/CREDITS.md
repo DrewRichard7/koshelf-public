@@ -1,6 +1,6 @@
 # Theme art credits
 
-Art in this folder is tinted and inlined into `static/themes.css` by `scripts/build-themes.py`. All of it was made for KoShelf and is released under CC0 1.0.
+Art in this folder is tinted and inlined into `src/static/themes.css` by `scripts/build-themes.py`. All of it was made for KoShelf and is released under CC0 1.0.
 
 | File | Source |
 | --- | --- |

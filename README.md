@@ -106,7 +106,7 @@ Use a folder dedicated to your books. The original backup workflow can copy comp
 
 ## Build and check
 
-On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.27.4 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
+On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.27.4 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `artifacts/build/portable/`.
 
 Builds are signed with a certificate named `KoShelf Signing` when your keychain has one, and ad hoc otherwise. macOS ties Full Disk Access, which Apple Books features need, to the signature. With ad hoc signing, every build needs the permission granted again. To create the certificate, open Keychain Access, choose **Keychain Access → Certificate Assistant → Create a Certificate…**, enter the name `KoShelf Signing`, and choose **Self-Signed Root** and **Code Signing**. Set `KOSHELF_SIGNING_IDENTITY` to use another identity, and `KOSHELF_VERSION` to label a development build, such as `1.2.1-dev`.
 
@@ -115,18 +115,18 @@ Builds are signed with a certificate named `KoShelf Signing` when your keychain 
 python3 scripts/check-service.py
 ```
 
-For a browser checkout without a macOS build, build the converter with `mkdir -p build && sh scripts/build-kindle-converter.sh "$PWD/build/koshelf-kindle-converter" "$PWD/build/KindleConverterNotices.txt"`.
+For a browser checkout without a macOS build, build the converter with `mkdir -p artifacts/build && sh scripts/build-kindle-converter.sh "$PWD/artifacts/build/koshelf-kindle-converter" "$PWD/artifacts/build/KindleConverterNotices.txt"`.
 
-Quit the installed app before copying `build/KoShelf.app` to `~/Applications/`. The smoke test starts the packaged service on a local port using a temporary library.
+Quit the installed app before copying `artifacts/build/KoShelf.app` to `~/Applications/`. The smoke test starts the packaged service on a local port using a temporary library.
 
-Run `./scripts/package-macos.sh` to build the self-contained installer in `dist/` and write its SHA-256 checksum beside it. It checks the two standalone Python archives against pinned SHA-256 digests, removes parts of Python that KoShelf doesn’t use, and includes KoShelf’s license, `PythonNotices.txt`, and `KindleConverterNotices.txt`. A portable build runs only its bundled Python. To smoke-test the portable build with its own interpreter, run `python3 scripts/check-service.py build/portable/KoShelf.app`. Before a release, stage the converter the way `scripts/build-kindle-converter.sh` does, then run `govulncheck ./...` in that folder for both `GOARCH=arm64` and `GOARCH=amd64`.
+Run `./scripts/package-macos.sh` to build the self-contained installer in `artifacts/dist/` and write its SHA-256 checksum beside it. It checks the two standalone Python archives against pinned SHA-256 digests, removes parts of Python that KoShelf doesn’t use, and includes KoShelf’s license, `PythonNotices.txt`, and `KindleConverterNotices.txt`. A portable build runs only its bundled Python. To smoke-test the portable build with its own interpreter, run `python3 scripts/check-service.py artifacts/build/portable/KoShelf.app`. Before a release, stage the converter the way `scripts/build-kindle-converter.sh` does, then run `govulncheck ./...` in that folder for both `GOARCH=arm64` and `GOARCH=amd64`.
 
 ```sh
 python3 -B -m unittest discover -q
-node --check static/app.js
+node --check src/static/app.js
 ```
 
-`app.py` serves the local API and handles EPUB and library operations. `genre_cleanup.py` implements offline genre suggestions. The shared interface lives in `static/`. `launcher.py` starts the desktop app or browser service, and `native/KoShelf.swift` hosts the interface and manages the desktop service. See [TODO.md](TODO.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for released changes.
+The Python code and the web interface live in `src/`, and the tests in `tests/`. `src/app.py` serves the local API and handles EPUB and library operations. `src/genre_cleanup.py` implements offline genre suggestions. The shared interface lives in `src/static/`. `src/launcher.py` starts the desktop app or browser service, and `native/KoShelf.swift` hosts the interface and manages the desktop service. See [TODO.md](TODO.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for released changes.
 
 ## License
 

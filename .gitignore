@@ -6,5 +6,7 @@ state/
 .env.*
 .venv/
 
+artifacts/
+# Build output from before the move to artifacts/.
 build/
 dist/

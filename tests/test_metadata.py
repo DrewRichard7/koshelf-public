@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 import app
-from test_app import CONTAINER
+from .test_app import CONTAINER
 
 OPF = '''<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf" version="3.0"><metadata><dc:identifier id="uid">urn:test</dc:identifier><dc:title id="title" xml:lang="ru">Старая книга</dc:title><dc:creator id="author" opf:file-as="Wrong sort" xml:lang="ru">Старое имя</dc:creator><meta refines="#author" property="file-as">Wrong sort</meta><meta name="calibre:author_sort" content="Old"/><dc:language>en</dc:language><dc:subject id="genre">Fantasy</dc:subject><meta refines="#genre" property="authority">BISAC</meta><meta refines="#genre" property="term">FIC009000</meta><dc:contributor>Translator to preserve</dc:contributor></metadata><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>'''
 
@@ -52,7 +52,7 @@ class MetadataTests(unittest.TestCase):
 
     def test_cover_edit_preserves_a_chapter_mislabeled_as_cover_art(self):
         from base64 import b64encode
-        from test_app import PNG
+        from .test_app import PNG
 
         chapter = b'<html>Keep this chapter</html>'
         malformed = OPF.replace('</manifest>', '<item id="bogus" href="chapter.xhtml" '

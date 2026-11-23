@@ -30,9 +30,5 @@ This file lists open work. When an item ships, move it to [CHANGELOG.md](CHANGEL
 
 ## Testing
 
-- [ ] Test 1.1.0's Kindle sync, eject, and Send to Kindle on a physical Kindle.
+- [ ] Test Kindle sync, eject, and Send to Kindle on a physical Kindle with the current release. They were last tested on a Kindle with pre-release builds of 1.2.0.
 - [ ] Test the Intel build on an Intel Mac, if one becomes available.
-
-## Maintenance
-
-- [ ] Clean up repository structure: main code in src/ directory, test files in tests/ directory, artifacts in artifacts/ directory, etc.

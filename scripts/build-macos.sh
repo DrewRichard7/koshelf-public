@@ -2,13 +2,13 @@
 set -eu
 cd "$(dirname "$0")/.."
 case "${1:-}" in
-    "") architectures=$(uname -m); portable=false; destination="$PWD/build/KoShelf.app" ;;
-    --portable) architectures="arm64 x86_64"; portable=true; destination="$PWD/build/portable/KoShelf.app" ;;
+    "") architectures=$(uname -m); portable=false; destination="$PWD/artifacts/build/KoShelf.app" ;;
+    --portable) architectures="arm64 x86_64"; portable=true; destination="$PWD/artifacts/build/portable/KoShelf.app" ;;
     *) printf 'Usage: %s [--portable]\n' "$0" >&2; exit 1 ;;
 esac
-mkdir -p build/module-cache build/go-cache "$(dirname "$destination")"
-export GOCACHE="$PWD/build/go-cache"
-scratch=$(mktemp -d "$PWD/build/macos.XXXXXX")
+mkdir -p artifacts/build/module-cache artifacts/build/go-cache "$(dirname "$destination")"
+export GOCACHE="$PWD/artifacts/build/go-cache"
+scratch=$(mktemp -d "$PWD/artifacts/build/macos.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 APP="$scratch/KoShelf.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/static"
@@ -18,13 +18,13 @@ for architecture in $architectures; do
         x86_64) go_arch=amd64 ;;
     esac
     # The current SDK ships Swift compatibility archives for ARM only.
-    swiftc -O -runtime-compatibility-version none -target "$architecture-apple-macos13.0" -module-cache-path "$PWD/build/module-cache" \
+    swiftc -O -runtime-compatibility-version none -target "$architecture-apple-macos13.0" -module-cache-path "$PWD/artifacts/build/module-cache" \
         native/KoShelf.swift -o "$scratch/KoShelf-$architecture" -framework AppKit -framework WebKit
     GOOS=darwin GOARCH="$go_arch" sh scripts/build-kindle-converter.sh \
         "$scratch/converter-$architecture" "$APP/Contents/Resources/KindleConverterNotices.txt"
     if "$portable"; then
         runtime="$APP/Contents/Resources/Python/$architecture"
-        sh scripts/bundle-python.sh "$architecture" "$runtime" "$PWD/build/downloads"
+        sh scripts/bundle-python.sh "$architecture" "$runtime" "$PWD/artifacts/build/downloads"
     fi
 done
 if "$portable"; then
@@ -42,9 +42,8 @@ if "$portable"; then
     cp notices/PythonNotices.txt "$APP/Contents/Resources/PythonNotices.txt"
 fi
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
-cp app.py apple_books.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
-cp epub_safety.py local_session.py "$APP/Contents/Resources/"
-cp static/index.html static/theme.js static/app.js static/style.css static/themes.css static/koshelf-icon.png "$APP/Contents/Resources/static/"
+(cd src && cp app.py apple_books.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py epub_safety.py local_session.py "$APP/Contents/Resources/")
+(cd src/static && cp index.html theme.js app.js style.css themes.css koshelf-icon.png "$APP/Contents/Resources/static/")
 if [ -f native/KoShelf.icns ]; then cp native/KoShelf.icns "$APP/Contents/Resources/KoShelf.icns"; fi
 if [ -n "${KOSHELF_VERSION:-}" ]; then
     # Label a development build, for example 1.1.2-dev, before it is signed.

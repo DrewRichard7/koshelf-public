@@ -14,7 +14,7 @@ import app
 import epub_safety
 import epub_split
 import kindle_delivery
-from test_app import CONTAINER, OPF, PNG, epub
+from .test_app import CONTAINER, OPF, PNG, epub
 
 
 class EpubSafetyTests(unittest.TestCase):

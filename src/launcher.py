@@ -73,7 +73,8 @@ def installed_app():
 def version():
     import plistlib
     here = Path(__file__).resolve().parent
-    for info in (here / 'native' / 'Info.plist', here.parent / 'Info.plist'):
+    # In a checkout, src/launcher.py reads native/Info.plist; in the app, Resources/../Info.plist.
+    for info in (here.parent / 'native' / 'Info.plist', here.parent / 'Info.plist'):
         try:
             with info.open('rb') as stream:
                 return plistlib.load(stream)['CFBundleShortVersionString']
