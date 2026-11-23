@@ -2,11 +2,11 @@
 
 This file records notable changes to KoShelf, newest first. Planned work lives in [TODO.md](TODO.md). Release downloads are on the [releases page](https://github.com/DrewRichard7/koshelf-public/releases).
 
-## Unreleased
+## 1.3.0 · 2026-11-23
 
 - **Dark mode.** A sun-and-moon switch above the shelf flips between light and dark, and **Settings → Appearance** also offers System. System follows your computer's light or dark mode. The app and the browser version share the choice, and generated covers and charts follow it too.
 - **Shelf actions moved up.** The main action button (such as **Sync libraries**) and the **Shelf actions** menu now sit in the window's top bar, next to the light/dark switch.
-- **Color themes.** **Settings → Theme** offers Tokyo Night, Gruvbox, Rosé Pine, Merino, Catppuccin, and Everforest besides KoShelf's own colors, each in light and dark. Previews show both variants. Two themes go further than colors: **Newsprint** has square corners, ink rules, newspaper type, and grayscale covers that turn to color under the pointer; **Matrix** is all monospace with green covers, glowing text and scanlines in dark mode, and green-bar printer paper in light mode. **Everforest** has a misty spruce forest behind the sidebar: daytime in light mode, and a winter night in dark mode, with snow on the trees, soft snow falling, and snow slowly settling on the shelf. Scenery stays in the window margins, and with Reduce motion turned on it stays still.
+- **Color themes.** **Settings → Theme** offers Tokyo Night, Gruvbox, Rosé Pine, Merino, Catppuccin, and Everforest besides KoShelf's own colors, each in light and dark. Previews show both variants. Three themes go further than colors: **Newsprint** has square corners, ink rules, newspaper type, and grayscale covers that turn to color under the pointer; **Matrix** is all monospace with green covers, glowing text and scanlines in dark mode, and green-bar printer paper in light mode. **Everforest** has a misty spruce forest behind the sidebar: daytime in light mode, and a winter night in dark mode, with snow on the trees, soft snow falling, and snow slowly settling on the shelf. Scenery stays in the window margins, and with Reduce motion turned on it stays still.
 - **KoShelf now requires macOS 13 or later.** The Kindle converter is built with Go 1.27, which no longer supports macOS 12.
 
 ## 1.2.0 · 2026-11-20
