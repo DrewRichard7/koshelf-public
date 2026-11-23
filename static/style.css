@@ -603,7 +603,7 @@ main{
   margin-top: 4px;
 }
 
-.cleanup-tag:is(.cleanup-tag-name, small), .cleanup-book {
+.cleanup-tag :is(.cleanup-tag-name, small), .cleanup-book {
   overflow-wrap: anywhere;
 }
 
@@ -992,3 +992,4 @@ main{
 :root[data-theme="dark"] .toggle-icon{opacity:0;transform:translateX(-6px)}
 :root[data-theme="dark"] .toggle-stars{opacity:.75;transform:none}
 @media(prefers-reduced-motion:reduce){.theme-toggle,.theme-toggle *{transition:none!important}}
+.theme-toggle:disabled{opacity:1;cursor:default}

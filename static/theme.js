@@ -6,6 +6,8 @@
   const apply = () => {
     const choice = root.dataset.appearance || 'system';
     root.dataset.theme = choice === 'system' ? (systemDark.matches ? 'dark' : 'light') : choice;
+    // In the app, the window's title bar and background follow the same choice.
+    window.webkit?.messageHandlers?.appearance?.postMessage(choice);
   };
   apply();
   systemDark.addEventListener('change', apply);

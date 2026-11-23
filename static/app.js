@@ -100,7 +100,7 @@ async function shrinkCover(blob) {
     canvas.width = width;
     canvas.height = Math.max(1, Math.round(bitmap.height * width / bitmap.width));
     const context = canvas.getContext('2d');
-    context.fillStyle = '#e5e4da';
+    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--placeholder').trim() || '#e5e4da';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     return await new Promise(resolve => canvas.toBlob(result => resolve(result || blob), 'image/jpeg', 0.88));
@@ -2261,22 +2261,29 @@ function showThemeToggle(){
 }
 new MutationObserver(showThemeToggle).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 showThemeToggle();
+// Look settings save one at a time: the switch and the Settings choices wait while one saves,
+// so quick clicks can't leave the saved value and the screen apart.
+const lookControls=()=>[themeToggle,...document.querySelectorAll('#settings-dialog input[name="appearance"],#settings-dialog input[name="theme"]')];
+async function saveLook(name,value,apply,previous){
+  for(const control of lookControls())control.disabled=true;
+  apply(value);
+  try{await saveSetting(name,value);return true;}
+  catch(e){apply(previous);throw e;}
+  finally{for(const control of lookControls())control.disabled=false;}
+}
 themeToggle.onclick=async()=>{
   const previous=document.documentElement.dataset.appearance||'system';
   const next=document.documentElement.dataset.theme==='dark'?'light':'dark';
-  window.koshelfSetAppearance(next);
-  try{await saveSetting('appearance',next);}
-  catch(e){window.koshelfSetAppearance(previous);$('notice').textContent=e.message;}
+  try{await saveLook('appearance',next,window.koshelfSetAppearance,previous);}
+  catch(e){$('notice').textContent=e.message;}
 };
 // Appearance and theme change at once. If saving fails, the previous choice comes back.
 for(const [name,attribute,apply,fallback] of [['appearance','appearance',window.koshelfSetAppearance,'system'],['theme','palette',window.koshelfSetTheme,'koshelf']]){
   for(const input of document.querySelectorAll(`#settings-dialog input[name="${name}"]`)){
     input.onchange=async()=>{
       const previous=document.documentElement.dataset[attribute]||fallback;
-      apply(input.value);
-      try{await saveSetting(name,input.value);$('settings-status').textContent='Saved.';}
+      try{await saveLook(name,input.value,apply,previous);$('settings-status').textContent='Saved.';}
       catch(e){
-        apply(previous);
         for(const other of document.querySelectorAll(`#settings-dialog input[name="${name}"]`))other.checked=other.value===previous;
         $('settings-status').textContent=e.message;
       }

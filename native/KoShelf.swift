@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildMenu()
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "chooseICloudFolder")
+        config.userContentController.add(self, name: "appearance")
+        // Use the saved appearance from the start, so the window doesn't flash the other mode.
+        applyAppearance(savedAppearance())
         config.userContentController.addUserScript(WKUserScript(
             source: "document.documentElement.classList.add('native-window')",
             injectionTime: .atDocumentEnd, forMainFrameOnly: true
@@ -94,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         process.arguments = ["-E", "-S", "-B", resources.appendingPathComponent("app.py").path,
                              "--port", "0", "--session-pipe"]
         // Never use a mounted volume as the process working directory: it must be ejectable.
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("KoShelf", isDirectory: true)
+        let support = stateFolder()
         do {
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
@@ -237,11 +240,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    func stateFolder() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("KoShelf", isDirectory: true)
+    }
+
+    /// The Appearance setting from settings.json: "system", "light", or "dark".
+    func savedAppearance() -> String {
+        guard let data = try? Data(contentsOf: stateFolder().appendingPathComponent("settings.json")),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let appearance = settings["appearance"] as? String else { return "system" }
+        return appearance
+    }
+
+    func applyAppearance(_ choice: String) {
+        switch choice {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         let origin = message.frameInfo.securityOrigin
-        guard message.name == "chooseICloudFolder", message.frameInfo.isMainFrame,
-              origin.protocol == "http", origin.host == "127.0.0.1", origin.port == serviceURL?.port,
-              window.attachedSheet == nil else { return }
+        guard message.frameInfo.isMainFrame, origin.protocol == "http", origin.host == "127.0.0.1",
+              origin.port == serviceURL?.port else { return }
+        if message.name == "appearance" {
+            if let choice = message.body as? String, ["system", "light", "dark"].contains(choice) { applyAppearance(choice) }
+            return
+        }
+        guard message.name == "chooseICloudFolder", window.attachedSheet == nil else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose a KoShelf folder in iCloud Drive"
         panel.prompt = "Choose"
