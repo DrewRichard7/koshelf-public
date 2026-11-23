@@ -18,7 +18,7 @@ for architecture in $architectures; do
         x86_64) go_arch=amd64 ;;
     esac
     # The current SDK ships Swift compatibility archives for ARM only.
-    swiftc -O -runtime-compatibility-version none -target "$architecture-apple-macos12.0" -module-cache-path "$PWD/build/module-cache" \
+    swiftc -O -runtime-compatibility-version none -target "$architecture-apple-macos13.0" -module-cache-path "$PWD/build/module-cache" \
         native/KoShelf.swift -o "$scratch/KoShelf-$architecture" -framework AppKit -framework WebKit
     GOOS=darwin GOARCH="$go_arch" sh scripts/build-kindle-converter.sh \
         "$scratch/converter-$architecture" "$APP/Contents/Resources/KindleConverterNotices.txt"
@@ -44,7 +44,7 @@ fi
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp app.py apple_books.py genre_cleanup.py cloud_sync.py digest_index.py epub_split.py kindle_fonts.py kindle_delivery.py library_fs.py "$APP/Contents/Resources/"
 cp epub_safety.py local_session.py "$APP/Contents/Resources/"
-cp static/index.html static/app.js static/style.css static/koshelf-icon.png "$APP/Contents/Resources/static/"
+cp static/index.html static/theme.js static/app.js static/style.css static/themes.css static/koshelf-icon.png "$APP/Contents/Resources/static/"
 if [ -f native/KoShelf.icns ]; then cp native/KoShelf.icns "$APP/Contents/Resources/KoShelf.icns"; fi
 if [ -n "${KOSHELF_VERSION:-}" ]; then
     # Label a development build, for example 1.1.2-dev, before it is signed.

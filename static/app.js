@@ -60,7 +60,8 @@ let visibleBooks = [];
 let bulkSaving = false;
 let overviewCollapsed = localStorage.getItem('koshelf-storage-collapsed') === 'true';
 let storageAnimations = [];
-const palettes = [['#d9ddc5','#3c503b'],['#d9c5b1','#5d4033'],['#cad7d7','#334f54'],['#e0d8b5','#5c5635'],['#d8ccd7','#554259']];
+// Generated covers and charts use theme colors from style.css, so they follow the appearance.
+const palettes = [1, 2, 3, 4, 5].map(n => [`var(--cover-${n}-bg)`, `var(--cover-${n}-ink)`]);
 function el(tag, text, cls) { const n = document.createElement(tag); if(text != null) n.textContent = text; if(cls) n.className=cls; return n; }
 const coverRequests = new WeakMap();
 
@@ -99,7 +100,7 @@ async function shrinkCover(blob) {
     canvas.width = width;
     canvas.height = Math.max(1, Math.round(bitmap.height * width / bitmap.width));
     const context = canvas.getContext('2d');
-    context.fillStyle = '#e5e4da';
+    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--placeholder').trim() || '#e5e4da';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     return await new Promise(resolve => canvas.toBlob(result => resolve(result || blob), 'image/jpeg', 0.88));
@@ -301,7 +302,7 @@ $('switch-mac').onclick=switchLibrary;
 $('switch-kindle').onclick=switchLibrary;
 const untaggedGenre=Symbol('untagged');
 const genreCollator=new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
-const shelfColors=['#607c62','#93a781','#bcc5a0','#c5b39c','#9daca9','#c0adb1','#d8cfba','#a6b5bd'];
+const shelfColors=[1,2,3,4,5,6,7,8].map(n=>`var(--chart-${n})`);
 const overviewStrip=$('overview-strip');
 for(const [control,card] of [['show-storage','storage'],['show-genres','genre-overview']]){
   $(control).onclick=()=>{
@@ -430,7 +431,7 @@ function renderGenres() {
   const ranked=[...groups].sort((a,b)=>b[1].share-a[1].share||genreCollator.compare(a[1].label,b[1].label));
   let angle=-Math.PI/2;
   ranked.forEach(([key,group],index)=>{
-    const color=key===untaggedGenre?'#d8dacc':shelfColors[index%shelfColors.length];
+    const color=key===untaggedGenre?'var(--chart-none)':shelfColors[index%shelfColors.length];
     const countShare=group.share/library.books.length;
     const summary=percent.format(countShare)+' of books';
     const activate=()=>{
@@ -2226,6 +2227,7 @@ async function saveSetting(name,value){
   const r=await shelfRequest('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{[name]:value}})});
   const data=await r.json();if(!r.ok)throw Error(data.error||'Could not save the setting.');
   appSettings=data;
+  if(name==='appearance'||name==='theme')return;
   comparison=null;comparedAt=0;
   await refresh();
   await checkConnection().catch(()=>{});
@@ -2235,6 +2237,10 @@ $('open-settings').onclick=async()=>{
   $('shelf-actions').open=false;
   await loadSettings();
   for(const input of settingsDialog.querySelectorAll('input[data-setting]'))input.checked=!!appSettings[input.dataset.setting];
+  const appearance=appSettings.appearance||document.documentElement.dataset.appearance||'system';
+  for(const input of settingsDialog.querySelectorAll('input[name="appearance"]'))input.checked=input.value===appearance;
+  const theme=appSettings.theme||document.documentElement.dataset.palette||'koshelf';
+  for(const input of settingsDialog.querySelectorAll('input[name="theme"]'))input.checked=input.value===theme;
   $('settings-status').textContent='';
   settingsDialog.showModal();
 };
@@ -2245,6 +2251,44 @@ for(const input of document.querySelectorAll('#settings-dialog input[data-settin
     catch(e){input.checked=!input.checked;$('settings-status').textContent=e.message;}
     finally{input.disabled=false;}
   };
+}
+// The light/dark switch in the window bar picks Light or Dark; Settings also offers System.
+const themeToggle=$('theme-toggle');
+function showThemeToggle(){
+  const dark=document.documentElement.dataset.theme==='dark';
+  themeToggle.setAttribute('aria-checked',String(dark));
+  themeToggle.title=dark?'Switch to light mode':'Switch to dark mode';
+}
+new MutationObserver(showThemeToggle).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+showThemeToggle();
+// Look settings save one at a time: the switch and the Settings choices wait while one saves,
+// so quick clicks can't leave the saved value and the screen apart.
+const lookControls=()=>[themeToggle,...document.querySelectorAll('#settings-dialog input[name="appearance"],#settings-dialog input[name="theme"]')];
+async function saveLook(name,value,apply,previous){
+  for(const control of lookControls())control.disabled=true;
+  apply(value);
+  try{await saveSetting(name,value);return true;}
+  catch(e){apply(previous);throw e;}
+  finally{for(const control of lookControls())control.disabled=false;}
+}
+themeToggle.onclick=async()=>{
+  const previous=document.documentElement.dataset.appearance||'system';
+  const next=document.documentElement.dataset.theme==='dark'?'light':'dark';
+  try{await saveLook('appearance',next,window.koshelfSetAppearance,previous);}
+  catch(e){$('notice').textContent=e.message;}
+};
+// Appearance and theme change at once. If saving fails, the previous choice comes back.
+for(const [name,attribute,apply,fallback] of [['appearance','appearance',window.koshelfSetAppearance,'system'],['theme','palette',window.koshelfSetTheme,'koshelf']]){
+  for(const input of document.querySelectorAll(`#settings-dialog input[name="${name}"]`)){
+    input.onchange=async()=>{
+      const previous=document.documentElement.dataset[attribute]||fallback;
+      try{await saveLook(name,input.value,apply,previous);$('settings-status').textContent='Saved.';}
+      catch(e){
+        for(const other of document.querySelectorAll(`#settings-dialog input[name="${name}"]`))other.checked=other.value===previous;
+        $('settings-status').textContent=e.message;
+      }
+    };
+  }
 }
 $('eject').onclick=async()=>{
   if(busy||loading)return;setBusy(true);$('eject').disabled=true;$('notice').textContent='Finishing up and asking macOS to eject your Kindle…';

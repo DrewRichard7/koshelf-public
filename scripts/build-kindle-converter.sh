@@ -5,7 +5,7 @@ output=$1
 notices=$2
 wrapper="$(cd "$(dirname "$0")/../native/converter" && pwd)"
 module=github.com/seapy/kindle-cli@v0.0.3-0.20260704180633-3a8bdee7f938
-export GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0
+export GOWORK=off GOTOOLCHAIN=go1.27.4 CGO_ENABLED=0
 metadata=$(go mod download -json "$module")
 work=$(mktemp -d "$(dirname "$output")/kindle-converter.XXXXXX")
 trap 'rm -rf "$work"' EXIT

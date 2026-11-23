@@ -271,12 +271,23 @@ SETTINGS_DEFAULTS = {
     'kindleDetection': True,     # Look for a connected Kindle under /Volumes or /media.
     'kindleAutoCompare': True,   # Compare a detected Kindle with the Mac in the background.
     'appleBooksProgress': False,  # Read Apple Books progress for the shelf and Kindle sync.
+    'appearance': 'system',       # Light or dark: follow the system, or always one of them.
+    'theme': 'koshelf',           # The color theme. Others are generated into static/themes.css.
 }
+# Settings that hold one of a few names instead of on or off.
+SETTINGS_CHOICES = {'appearance': ('system', 'light', 'dark'),
+                    'theme': ('koshelf', 'tokyonight', 'gruvbox', 'rose-pine', 'merino', 'catppuccin', 'everforest', 'newsprint', 'matrix')}
 SETTINGS = {'path': None, 'values': None}
 
 
+def valid_setting(key, value):
+    if key in SETTINGS_CHOICES:
+        return isinstance(value, str) and value in SETTINGS_CHOICES[key]
+    return key in SETTINGS_DEFAULTS and isinstance(value, bool)
+
+
 def settings():
-    """The user's privacy choices, from settings.json in the state folder."""
+    """The user's settings (what KoShelf may read, and its look), from settings.json in the state folder."""
     path = JOURNAL.with_name('settings.json')
     if SETTINGS['path'] != path:
         try:
@@ -285,14 +296,14 @@ def settings():
         except (OSError, ValueError):
             stored = {}
         stored = stored if isinstance(stored, dict) else {}
-        SETTINGS.update(path=path, values={key: stored[key] if isinstance(stored.get(key), bool) else default
+        SETTINGS.update(path=path, values={key: stored[key] if valid_setting(key, stored.get(key)) else default
                                            for key, default in SETTINGS_DEFAULTS.items()})
     return dict(SETTINGS['values'])
 
 
 def save_settings(changes):
     if (not isinstance(changes, dict) or not changes
-            or any(key not in SETTINGS_DEFAULTS or not isinstance(value, bool) for key, value in changes.items())):
+            or any(not valid_setting(key, value) for key, value in changes.items())):
         raise ValueError('Choose a setting to change.')
     values = {**settings(), **changes}
     path = JOURNAL.with_name('settings.json')
@@ -3667,11 +3678,20 @@ class Handler(BaseHTTPRequestHandler):
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                   '/favicon.ico': ('koshelf-icon.png', 'image/png'),
                   '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                  '/theme.js': ('theme.js', 'text/javascript; charset=utf-8'),
                   '/style.css': ('style.css', 'text/css; charset=utf-8'),
+                  '/themes.css': ('themes.css', 'text/css; charset=utf-8'),
                   '/koshelf-icon.png': ('koshelf-icon.png', 'image/png')}
         if url.path in assets:
             name, mime = assets[url.path]
-            return self.send((STATIC / name).read_bytes(), mime)
+            body = (STATIC / name).read_bytes()
+            if name == 'index.html':
+                # The saved appearance and theme are in the page itself, so it draws in the right colors at once.
+                # Both are names from SETTINGS_CHOICES, so they are safe in an attribute.
+                chosen = settings()
+                body = body.replace(b'<html lang="en">', f'<html lang="en" data-appearance="{chosen["appearance"]}" '
+                                    f'data-palette="{chosen["theme"]}">'.encode(), 1)
+            return self.send(body, mime)
         if url.path == '/api/kindle-delivery':
             try:
                 documents = kindle_documents()

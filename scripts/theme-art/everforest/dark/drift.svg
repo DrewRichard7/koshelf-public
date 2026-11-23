@@ -1,0 +1,5 @@
+<!-- A strip of settled snow, repeated along the panel's top edge. Hand-drawn for KoShelf (CC0). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="14" viewBox="0 0 160 14" preserveAspectRatio="none">
+  <path fill="{{ink}}" d="M0 14V9C12 6 22 4 36 6s26 5 40 2 24-6 38-5 30 6 46 6v6z"/>
+  <path fill="none" stroke="{{ink-soft}}" stroke-opacity=".5" d="M6 11c20-2 38 0 56-1s40-3 62-1 26 1 32 1"/>
+</svg>
