@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 
 project = Path(__file__).resolve().parents[1]
-bundle = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else project/'build/KoShelf.app'
+bundle = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else project/'artifacts/build/KoShelf.app'
 resources = bundle/'Contents/Resources'
 bundled_python = resources/'Python'/platform.machine()/'bin/python3'
 if len(sys.argv) > 1 and not bundled_python.is_file():

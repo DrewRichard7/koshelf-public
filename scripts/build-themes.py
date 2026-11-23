@@ -7,14 +7,14 @@ its palette here. Run it after changing a palette:
 
     python3 scripts/build-themes.py
 
-test_appearance.py fails when static/themes.css doesn't match this file.
+tests/test_appearance.py fails when src/static/themes.css doesn't match this file.
 The KoShelf theme itself is hand-tuned at the top of style.css and isn't generated.
 """
 from pathlib import Path
 import re
 import urllib.parse
 
-OUTPUT = Path(__file__).resolve().parent.parent / 'static' / 'themes.css'
+OUTPUT = Path(__file__).resolve().parent.parent / 'src' / 'static' / 'themes.css'
 # Decorative SVGs, one folder per theme, with light/ and dark/ subfolders for art used in one mode.
 # {{token}} placeholders take that mode's colors, because an SVG used as a CSS image can't read
 # CSS variables. Credits are in CREDITS.md there.

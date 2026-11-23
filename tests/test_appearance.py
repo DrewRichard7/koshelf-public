@@ -78,7 +78,7 @@ class ThemeTokenTests(unittest.TestCase):
 
 
 def load_theme_builder():
-    spec = importlib.util.spec_from_file_location('build_themes', Path(app.__file__).parent / 'scripts' / 'build-themes.py')
+    spec = importlib.util.spec_from_file_location('build_themes', Path(app.__file__).resolve().parents[1] / 'scripts' / 'build-themes.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

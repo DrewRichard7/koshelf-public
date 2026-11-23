@@ -9,4 +9,4 @@ while [ -L "$wrapper" ]; do
         *) wrapper=$directory/$target ;;
     esac
 done
-exec python3 "$(dirname -- "$wrapper")/launcher.py" "$@"
+exec python3 "$(dirname -- "$wrapper")/src/launcher.py" "$@"

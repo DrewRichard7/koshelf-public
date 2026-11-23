@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import app
 import apple_books
-from test_sync_review import settings
+from .test_sync_review import settings
 
 CONTAINER = '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>'
 
