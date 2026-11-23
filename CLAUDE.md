@@ -45,7 +45,9 @@ A service started without `KOSHELF_STATE_DIR` uses the real app data folder (`~/
 
 ## Interface
 
-Keep the warm paper palette, subtle grain, fixed-position library slider, and the book cards sliding out and back in when switching libraries. The maintainer approved that transition. Shelf cards are reused between renders (`bookCard` in `static/app.js`). When a card shows a new book field, add that field to `cardKey`.
+Keep the warm paper palette (and its dark counterpart), subtle grain, fixed-position library slider, and the book cards sliding out and back in when switching libraries. The maintainer approved that transition. Shelf cards are reused between renders (`bookCard` in `static/app.js`). When a card shows a new book field, add that field to `cardKey`.
+
+**Colors come from theme tokens.** `style.css` starts with the light tokens on `:root` and the dark ones on `[data-theme="dark"]`. Rules and `app.js` use `var(--token)`, never literal colors, and both themes define every token. `test_appearance.py` checks this. `static/theme.js` sets `data-theme` before the page draws, from the `appearance` setting that the server writes into `index.html`. The other color themes live in `static/themes.css`, keyed by `data-palette`. Don't edit that file by hand: change the palettes in `scripts/build-themes.py` and run it. A theme there can also set fonts (typefaces are the `--serif`, `--sans`, and `--mono` tokens) and extra CSS for shape and effects, as Newsprint and Matrix do. Scenery art (Everforest) lives in `scripts/theme-art/<theme>/`; the forest and snow are drawn by `scripts/theme-art/make-scenery.py`, so change and rerun that instead of editing them. Art used in only one mode goes in a `light/` or `dark/` subfolder. Its `{{token}}` placeholders take each mode's colors, and the generator inlines it as `--art-<name>` data URLs. Credit every file in `scripts/theme-art/CREDITS.md`, and keep scenery in the window margins with `pointer-events:none`, transform-only motion, and a reduced-motion rule. To add a theme, add its palette there, its name to `SETTINGS_CHOICES` in `app.py`, and a preview in the Settings dialog in `index.html`.
 
 ## Releasing
 
@@ -60,4 +62,4 @@ Keep the warm paper palette, subtle grain, fixed-position library slider, and th
    - keep the untested-Intel note unless the build was tested on an Intel Mac;
    - include the SHA-256.
 
-Stay on Go 1.26.x while KoShelf supports macOS 12, because Go 1.27 requires macOS 13.
+KoShelf requires macOS 13 or later. Keep the Go toolchain in `scripts/build-kindle-converter.sh` and `native/converter/go.mod` on a supported Go release, and check the macOS minimum in its release notes before raising the version.

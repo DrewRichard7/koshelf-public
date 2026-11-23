@@ -34,12 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 650, height: 500)
-        window.backgroundColor = NSColor(calibratedRed: 0.933, green: 0.910, blue: 0.863, alpha: 1)
+        // The window shell colors from style.css, light and dark, shown until the page draws.
+        window.backgroundColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(calibratedRed: 0.086, green: 0.102, blue: 0.090, alpha: 1)
+                : NSColor(calibratedRed: 0.933, green: 0.910, blue: 0.863, alpha: 1)
+        }
         window.contentView = webView
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        webView.loadHTMLString("<html><body style='background:#f1f3eb;color:#345849;display:grid;place-items:center;height:90vh;font:30px Georgia'>KoShelf is waking up…</body></html>", baseURL: nil)
+        webView.loadHTMLString("<html><style>body{background:#f1f3eb;color:#345849;display:grid;place-items:center;height:90vh;font:30px Georgia}@media(prefers-color-scheme:dark){body{background:#1e2320;color:#86b596}}</style><body>KoShelf is waking up…</body></html>", baseURL: nil)
         startService()
     }
 

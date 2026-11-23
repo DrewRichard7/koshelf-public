@@ -10,7 +10,7 @@ KoShelf organizes EPUBs on your Mac and in the `books` folder of a USB-mounted K
 
 Download the latest [KoShelf disk image](https://github.com/DrewRichard7/koshelf-public/releases/latest).
 
-Open the KoShelf disk image and drag **KoShelf** into **Applications**. Launch that copy from Finder or Raycast. The portable package includes Python and the Kindle converter for Apple silicon and Intel Macs running macOS 12 or later. It has been tested on Apple silicon only. The Intel build is included but untested, because no Intel Mac was available. Transfer support depends on the Kindle appearing as a mounted USB drive.
+Open the KoShelf disk image and drag **KoShelf** into **Applications**. Launch that copy from Finder or Raycast. The portable package includes Python and the Kindle converter for Apple silicon and Intel Macs running macOS 13 or later. It has been tested on Apple silicon only. The Intel build is included but untested, because no Intel Mac was available. Transfer support depends on the Kindle appearing as a mounted USB drive.
 
 The disk image includes [Read before installing](READ-BEFORE-INSTALLING.txt). The app uses an ad hoc signature, so macOS may show a Gatekeeper warning the first time you open it. Control-click the app and choose **Open** instead of turning off Gatekeeper. Each release lists the disk image’s SHA-256 checksum. Compare it with `shasum -a 256 KoShelf-<version>-macOS.dmg` before opening a copy you received from someone else.
 
@@ -85,13 +85,15 @@ On macOS, KoShelf can read Apple Books' library. It never changes Apple Books' o
 
 When you open an explicit folder with `--library`, **Back up library** copies into `~/KoShelf Library`. It preserves relative paths and empty folders, skips identical files, and saves changed same-path files under a content-based suffix. Keep the source connected through the result summary.
 
+**Shelf actions → Settings…** sets the look. **Appearance** switches between light and dark; **System** (the default) follows your computer's light or dark mode. The sun-and-moon switch at the top of the window flips between light and dark directly. **Theme** chooses the colors: KoShelf's own, or Tokyo Night, Gruvbox, Rosé Pine, Merino, Catppuccin, Everforest, Newsprint (a black-and-white newspaper), or Matrix (a green phosphor terminal, and green-bar printer paper in light mode). Each has light and dark variants. Everforest adds a misty spruce forest around the shelf, with snow at night, which stays still when macOS's Reduce motion is on. The theme art is CC0; see [scripts/theme-art/CREDITS.md](scripts/theme-art/CREDITS.md).
+
 KoShelf stores its data under `~/Library/Application Support/KoShelf/` on macOS, for both the app and the browser, and under `~/.local/state/koshelf/` on Linux, or `$XDG_STATE_HOME/koshelf/` when that is set. This data includes tag mappings, sync history and undo, recovery copies, and logs. Set `KOSHELF_STATE_DIR` to use another folder. Earlier releases kept browser data in `state/` in the checkout; move its files into the new folder to keep them. The state folder also holds `metadata-cache.json` and `sync-digests.json`, which let KoShelf skip rereading unchanged books. Deleting them is safe. `moves.jsonl` records metadata backup paths, and `metadata-backups/` holds original EPUBs. `sync-versions/` holds Kindle versions that differed from the Mac during a sync, including older KOReader reading files, arranged by library path. To restore a metadata backup, locate the original path in the journal, quit KoShelf, and copy the saved EPUB over that path using the original filename. Backups accumulate until you manage them.
 
 ## Privacy and security
 
 KoShelf serves its interface on this computer’s loopback address, on a random port. Library operations require a session created by the desktop or terminal launcher. If you close a browser tab, open a fresh session with `./koshelf --browser`. KoShelf has no telemetry. The bundled Kindle converter runs offline in a macOS sandbox that blocks network access and limits it to its own working folder. Linux has no sandbox for it yet. If you build the converter on Linux, **Send to Kindle** converts only after you tick **Run the converter without a sandbox**, each time, so convert only EPUBs you trust.
 
-KoShelf reads nothing outside the library you open unless you choose it. **Shelf actions → Settings…** controls three things:
+KoShelf reads nothing outside the library you open unless you choose it. The privacy section of **Shelf actions → Settings…** controls three things:
 - **Look for a connected Kindle:** checks removable drives for a Kindle with KOReader. On by default. Turn it off and open a Kindle with **Choose library folder**.
 - **Check for changes automatically:** while a Kindle is connected, compares it with your Mac library in the background so KoShelf can show when a sync is available. On by default.
 - **Use Apple Books progress:** off by default.
@@ -104,7 +106,7 @@ Use a folder dedicated to your books. The original backup workflow can copy comp
 
 ## Build and check
 
-On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.26.11 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
+On macOS, install the Apple Command Line Tools and make Python 3.11 or later and Go available. The build uses Go 1.27.4 for the pinned offline converter and includes its license notices. The default developer build uses the host architecture, signs locally, and uses a Python 3.11 or later already installed on the Mac. `./scripts/build-macos.sh --portable` builds the universal app with its own Python in `build/portable/`.
 
 Builds are signed with a certificate named `KoShelf Signing` when your keychain has one, and ad hoc otherwise. macOS ties Full Disk Access, which Apple Books features need, to the signature. With ad hoc signing, every build needs the permission granted again. To create the certificate, open Keychain Access, choose **Keychain Access → Certificate Assistant → Create a Certificate…**, enter the name `KoShelf Signing`, and choose **Self-Signed Root** and **Code Signing**. Set `KOSHELF_SIGNING_IDENTITY` to use another identity, and `KOSHELF_VERSION` to label a development build, such as `1.2.1-dev`.
 
@@ -128,6 +130,6 @@ node --check static/app.js
 
 ## License
 
-KoShelf is released under the [MIT License](LICENSE). The Kindle converter and the bundled Python include third-party software under their own licenses. Their notices ship in the app as `KindleConverterNotices.txt` and [`PythonNotices.txt`](notices/PythonNotices.txt).
+KoShelf is released under the [MIT License](LICENSE). The color themes adapt the palettes of [Tokyo Night](https://github.com/folke/tokyonight.nvim) (Apache-2.0), [Gruvbox](https://github.com/morhetz/gruvbox), [Rosé Pine](https://github.com/rose-pine/neovim), [Catppuccin](https://github.com/catppuccin/nvim), [Everforest](https://github.com/sainnhe/everforest), and [GitHub Primer](https://github.com/primer/primitives), which Merino is based on (all MIT). The Kindle converter and the bundled Python include third-party software under their own licenses. Their notices ship in the app as `KindleConverterNotices.txt` and [`PythonNotices.txt`](notices/PythonNotices.txt).
 
 KoShelf is an independent project. It is not affiliated with or endorsed by Amazon or the KOReader project. Kindle is a trademark of Amazon.com, Inc. or its affiliates.

@@ -1,6 +1,6 @@
 module github.com/seapy/kindle-cli
 
-go 1.26.11
+go 1.27.4
 
 require (
 	github.com/leotaku/mobi v0.5.0
